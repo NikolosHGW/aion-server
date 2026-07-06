@@ -1,0 +1,7 @@
+.git
+**/target
+**/.idea
+**/.classpath
+**/.project
+**/.settings
+docker/mysql

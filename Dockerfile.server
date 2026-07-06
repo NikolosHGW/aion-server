@@ -1,0 +1,28 @@
+FROM maven:3-eclipse-temurin-25 AS build
+
+WORKDIR /src
+
+COPY pom.xml .
+COPY commons/pom.xml commons/pom.xml
+COPY login-server/pom.xml login-server/pom.xml
+COPY chat-server/pom.xml chat-server/pom.xml
+COPY game-server/pom.xml game-server/pom.xml
+
+COPY . .
+
+RUN mvn -B package
+
+RUN mkdir -p /opt/aion/login-server /opt/aion/chat-server /opt/aion/game-server \
+	&& cd /opt/aion/login-server && jar xf /src/login-server/target/login-server.zip \
+	&& cd /opt/aion/chat-server && jar xf /src/chat-server/target/chat-server.zip \
+	&& cd /opt/aion/game-server && jar xf /src/game-server/target/game-server.zip \
+	&& mv /opt/aion/login-server/login-server/* /opt/aion/login-server/ \
+	&& mv /opt/aion/chat-server/chat-server/* /opt/aion/chat-server/ \
+	&& mv /opt/aion/game-server/game-server/* /opt/aion/game-server/ \
+	&& rmdir /opt/aion/login-server/login-server /opt/aion/chat-server/chat-server /opt/aion/game-server/game-server
+
+FROM eclipse-temurin:25-jdk
+
+WORKDIR /opt/aion
+
+COPY --from=build /opt/aion /opt/aion

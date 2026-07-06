@@ -1,0 +1,48 @@
+services:
+  login:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: aion-login
+    working_dir: /opt/aion/login-server
+    command: sh -c 'java -Xms48m -Xmx48m -XX:+UseNUMA -XX:+UseCompactObjectHeaders -cp "libs/*" com.aionemu.loginserver.LoginServer'
+    ports:
+      - "2106:2106"
+    volumes:
+      - ./docker/server-config/login/myls.properties:/opt/aion/login-server/config/myls.properties:ro
+    depends_on:
+      - mysql
+    restart: unless-stopped
+
+  chat:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: aion-chat
+    working_dir: /opt/aion/chat-server
+    command: sh -c 'java -Xms72m -Xmx72m -XX:+UseNUMA -XX:+UseCompactObjectHeaders -cp "libs/*" com.aionemu.chatserver.ChatServer'
+    ports:
+      - "10241:10241"
+    volumes:
+      - ./docker/server-config/chat/mycs.properties:/opt/aion/chat-server/config/mycs.properties:ro
+    depends_on:
+      - mysql
+    restart: unless-stopped
+
+  game:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: aion-game
+    working_dir: /opt/aion/game-server
+    command: sh -c 'java -Xms1024m -Xmx2560m -XX:+UseNUMA -XX:+UseCompactObjectHeaders -cp "libs/*" com.aionemu.gameserver.GameServer'
+    ports:
+      - "7777:7777"
+    volumes:
+      - ./docker/server-config/game/mygs.properties:/opt/aion/game-server/config/mygs.properties:ro
+    depends_on:
+      - mysql
+      - login
+      - chat
+    restart: unless-stopped
+
