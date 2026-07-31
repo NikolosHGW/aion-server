@@ -12,6 +12,9 @@ import com.aionemu.gameserver.configs.main.ShutdownConfig;
 import com.aionemu.gameserver.network.aion.serverpackets.SM_SYSTEM_MESSAGE;
 import com.aionemu.gameserver.services.GameTimeService;
 import com.aionemu.gameserver.services.PeriodicSaveService;
+import com.aionemu.gameserver.services.ai.CompanionService;
+import com.aionemu.gameserver.services.ai.ServerControlledPlayerService;
+import com.aionemu.gameserver.services.ai.SyntheticPlayerRuntime;
 import com.aionemu.gameserver.services.cron.CronService;
 import com.aionemu.gameserver.services.cron.CurrentThreadRunnableRunner;
 import com.aionemu.gameserver.utils.PacketSendUtility;
@@ -67,6 +70,19 @@ public class ShutdownHook extends Thread {
 			} catch (Exception e) {
 				log.error("", e);
 			}
+		}
+
+		try {
+			CompanionService.getInstance().shutdown();
+		} catch (Exception e) {
+			log.error("Failed to remove runtime companion before shutdown", e);
+		}
+		try {
+			ServerControlledPlayerService.getInstance().shutdown();
+		} catch (Exception e) {
+			log.error("Failed to remove route spike player before shutdown", e);
+		} finally {
+			SyntheticPlayerRuntime.getInstance().shutdownScheduler();
 		}
 
 		GameServer.shutdownNioServer(); // shuts down network, disconnects cs/ls/all players and saves them

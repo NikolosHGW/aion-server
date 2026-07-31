@@ -1,11 +1,14 @@
 # ADR-0001: модель ServerControlledPlayer
 
-Статус: Proposed — требуется подтверждение владельца
+Статус: Accepted
 
 Дата: 2026-07-30
 
+Принято владельцем: 2026-07-30
+
 Связанные документы: [архитектура](ARCHITECTURE.md),
-[план этапа 1](IMPLEMENTATION_PLAN.md)
+[план этапа 1](IMPLEMENTATION_PLAN.md),
+[план этапа 2A](IMPLEMENTATION_PLAN_2A.md)
 
 ## Контекст
 
@@ -190,6 +193,27 @@ presence consumers.
 5. Tick допустим только для spawned player в активном registry.
 6. Выключенные flags не меняют обычный login, packets или NPC AI.
 7. Этап 1 не вызывает `PlayerLeaveWorldService` и не сохраняет transient state.
+
+## Подтверждение решения ручным тестом
+
+2026-07-31 владелец проекта принял этап 1 после проверки двумя настоящими
+клиентами. Тест подтвердил:
+
+- вложенный обычный `Player` отображается клиентам как player model с
+  runtime-префиксом `[AI]`, несмотря на `clientConnection == null`;
+- штатные player packets обеспечивают непрерывное движение, корректные heading
+  и анимацию, а поздний наблюдатель получает актуальную позицию;
+- повторное пересечение границы видимости не создаёт duplicate;
+- spawn/despawn lifecycle и повторный despawn корректны;
+- runtime-имя, позиция, heading, world и online marker не записываются в
+  DB-шаблон, а закрытый template account остаётся деактивированным;
+- у обычных игроков в проведённом сценарии регрессий не обнаружено.
+
+Эти результаты подтверждают выбранную композиционную модель для presentation,
+movement и transient lifecycle этапа 1. Они не доказывают безопасность
+connection-dependent доменов будущих этапов: combat, quests, groups, inventory
+operations и economy по-прежнему должны подключаться через отдельный gateway и
+проходить собственную приёмку.
 
 ## Условия пересмотра ADR
 

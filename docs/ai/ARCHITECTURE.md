@@ -400,33 +400,42 @@ skills, stats, inventory, quests и groups различаются.
 ```text
 ServerControlledPlayer
   owns -> Player                       # единственное тело в World
-  owns -> ServerPlayerController       # интерфейс намерений, одна реализация
-  owns -> runtime state                # lifecycle, nextDue, route, seed
-  uses -> PlayerActionGateway          # одинаковые игровые правила
-  uses -> PerceptionService            # known-list + stealth + LoS + range
+  owns -> ServerPlayerController       # route либо companion behavior
+  owns -> runtime state                # role и lifecycle
+
+CompanionController
+  reads -> CompanionContext            # owner/body snapshot
+  uses -> PlayerActionGateway          # только разрешённые игровые действия
+
+PlayerActionGateway (этап 2A)
+  -> checkMovement                     # region + collision + LoS
+  -> startMove
+  -> stopMove
 
 ServerPlayerController
-  <- CompanionController               # намерения владельца, follow/help
-  <- CitizenController                 # автономные цели и расписание
+  <- RouteServerPlayerController       # технический маршрут этапа 1
+  <- CompanionController               # follow/stay/blocked этапа 2A
+  <- CitizenController                 # будущие автономные цели
 ```
 
-`ServerControlledPlayer` отвечает за общие lifecycle, movement, combat action
-execution, inventory/quest access, сохранение метаданных и observability.
-Ролевые контроллеры не меняют `Player` напрямую и не дублируют исполнители.
-Они только выбирают намерение (`MOVE_TO`, `ATTACK`, `USE_SKILL`,
-`INTERACT`, `LOOT`, ...), используя ограниченное восприятие.
+`ServerControlledPlayer` отвечает за общее тело, role и lifecycle. Ролевые
+контроллеры принимают решения, но игровые действия выполняют только через
+узкие gateway-интерфейсы. Методы следующих доменов не добавляются заранее.
 
-В этапе 1 нет ни `CompanionController`, ни `CitizenController`: вместо них
-используется узкий `RouteController`, который выдаёт только следующее движение
-по фиксированному маршруту.
+В этапе 1 используется `RouteServerPlayerController`. В этапе 2A реализован
+`CompanionController`, который принимает только решения follow/stay/blocked и
+не обращается к `World`, movement controller, geodata или packet-коду напрямую.
+Его `PlayerActionGateway` содержит только `checkMovement`, `startMove` и
+`stopMove`. Combat, skills, quests, groups, inventory и economy не подключены.
 
 ## 6. Общий scheduler и отсутствие фоновой симуляции
 
-Планируется один `SyntheticPlayerScheduler`, запущенный через существующий
-`ThreadPoolManager`/`AbstractPeriodicTaskManager`, а не поток на AI.
+Реализован один общий `SyntheticPlayerScheduler`, запущенный через существующий
+`ThreadPoolManager`, а не поток на AI.
 
-- Registry хранит активные wrappers по player object ID.
-- Очередь обходится round-robin; у каждого AI есть `nextDueNanos`.
+- Registry хранит активные wrappers по player object ID и отдельно ограничивает
+  единственность каждой role.
+- Очередь этапов 1/2A обходится round-robin.
 - На каждый scheduler run задаются `maxActions` и `budgetNanos`.
 - После исчерпания бюджета остаток остаётся на следующий run.
 - Movement интерполируется существующим `PlayerMoveTaskManager` раз в 200 ms.

@@ -2,7 +2,6 @@ package com.aionemu.gameserver.world.container;
 
 import java.util.Collection;
 import java.util.Iterator;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import com.aionemu.gameserver.model.gameobjects.player.Player;
@@ -15,42 +14,36 @@ import com.aionemu.gameserver.world.exceptions.DuplicateAionObjectException;
  */
 public class PlayerContainer implements Iterable<Player> {
 
-	private final ConcurrentHashMap<Integer, Player> playersById = new ConcurrentHashMap<>();
-	private final ConcurrentHashMap<String, Player> playersByName = new ConcurrentHashMap<>();
+	private final IdentityIndexedContainer<Integer, String, Player> players = new IdentityIndexedContainer<>();
 
 	public void add(Player player) {
-		if (playersById.put(player.getObjectId(), player) != null)
-			throw new DuplicateAionObjectException(player, playersById.get(player.getObjectId()));
-		if (playersByName.put(player.getName(), player) != null)
-			throw new DuplicateAionObjectException(player, playersByName.get(player.getName()));
+		Player collision = players.add(player.getObjectId(), player.getName(), player);
+		if (collision != null)
+			throw new DuplicateAionObjectException(player, collision);
 	}
 
 	public void remove(Player player) {
-		playersById.remove(player.getObjectId());
-		playersByName.remove(player.getName());
+		players.remove(player.getObjectId(), player.getName(), player);
 	}
 
 	public Player get(int objectId) {
-		return playersById.get(objectId);
+		return players.getById(objectId);
 	}
 
 	public Player get(String name) {
-		return playersByName.get(name);
+		return players.getByName(name);
 	}
 
 	@Override
 	public Iterator<Player> iterator() {
-		return playersById.values().iterator();
+		return players.values().iterator();
 	}
 
 	public Collection<Player> getAllPlayers() {
-		return playersById.values().stream().filter(p -> p != null).collect(Collectors.toList()); // ensure there are no null values (due to concurrent object removal)
+		return players.values().stream().filter(p -> p != null).collect(Collectors.toList()); // ensure there are no null values (due to concurrent object removal)
 	}
 
 	public void updateCachedPlayerName(String oldName, Player player) {
-		playersByName.compute(oldName, (n, p)-> {
-			playersByName.put(player.getName(), player);
-			return player.equals(p) ? null : p;
-		});
+		players.updateName(oldName, player.getName(), player);
 	}
 }

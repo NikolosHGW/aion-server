@@ -47,6 +47,7 @@ import com.aionemu.gameserver.questEngine.QuestEngine;
 import com.aionemu.gameserver.questEngine.model.QuestEnv;
 import com.aionemu.gameserver.restrictions.PlayerRestrictions;
 import com.aionemu.gameserver.services.*;
+import com.aionemu.gameserver.services.ai.ServerControlledPlayerService;
 import com.aionemu.gameserver.services.conquerorAndProtectorSystem.ConquerorAndProtectorService;
 import com.aionemu.gameserver.services.drop.DropService;
 import com.aionemu.gameserver.services.instance.InstanceService;
@@ -88,6 +89,8 @@ public class PlayerController extends CreatureController<Player> {
 
 	@Override
 	public void see(VisibleObject object) {
+		if (ServerControlledPlayerService.getInstance().isServerControlled(getOwner()))
+			return;
 		super.see(object);
 		if (object instanceof Creature creature) {
 			if (creature instanceof Npc npc) {
@@ -130,6 +133,8 @@ public class PlayerController extends CreatureController<Player> {
 
 	@Override
 	public void notSee(VisibleObject object, ObjectDeleteAnimation animation) {
+		if (ServerControlledPlayerService.getInstance().isServerControlled(getOwner()))
+			return;
 		super.notSee(object, animation);
 		if (!getOwner().isSpawned()) // player is teleporting, no need to send deletion packets
 			return;
@@ -148,6 +153,8 @@ public class PlayerController extends CreatureController<Player> {
 
 	@Override
 	public void onTargetChanged(VisibleObject oldTarget, VisibleObject newTarget) {
+		if (ServerControlledPlayerService.getInstance().isServerControlled(getOwner()))
+			return;
 		super.onTargetChanged(oldTarget, newTarget);
 		PacketSendUtility.sendPacket(getOwner(), new SM_TARGET_SELECTED(newTarget));
 		PacketSendUtility.broadcastToSightedPlayers(getOwner(), new SM_TARGET_UPDATE(getOwner()));
@@ -192,6 +199,8 @@ public class PlayerController extends CreatureController<Player> {
 	@Override
 	public void onEnterZone(ZoneInstance zone) {
 		Player player = getOwner();
+		if (ServerControlledPlayerService.getInstance().isServerControlled(player))
+			return;
 		if (!zone.canRide() && player.isInPlayerMode(PlayerMode.RIDE))
 			player.unsetPlayerMode(PlayerMode.RIDE);
 		ConquerorAndProtectorService.getInstance().onEnterZone(player, zone);
@@ -206,6 +215,8 @@ public class PlayerController extends CreatureController<Player> {
 	@Override
 	public void onLeaveZone(ZoneInstance zone) {
 		Player player = getOwner();
+		if (ServerControlledPlayerService.getInstance().isServerControlled(player))
+			return;
 		ConquerorAndProtectorService.getInstance().onLeaveZone(player, zone);
 		InstanceService.onLeaveZone(player, zone);
 		ZoneName zoneName = zone.getAreaTemplate().getZoneName();

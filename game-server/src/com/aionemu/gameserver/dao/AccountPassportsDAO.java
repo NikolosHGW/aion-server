@@ -30,6 +30,10 @@ public class AccountPassportsDAO {
 	private static final String SELECT_STAMPS_QUERY = "SELECT `stamps`, `last_stamp` FROM `account_stamps` WHERE `account_id`=?";
 
 	public static void loadPassport(Account account) {
+		loadPassport(account, true);
+	}
+
+	public static void loadPassport(Account account, boolean initializeMissingPersistentData) {
 		PassportsList passportList = new PassportsList();
 		try (Connection con = DatabaseFactory.getConnection()) {
 			try (PreparedStatement stmt = con.prepareStatement(SELECT_QUERY)) {
@@ -53,7 +57,7 @@ public class AccountPassportsDAO {
 				if (rset.next()) {
 					stamps = rset.getInt("stamps");
 					lastStamp = rset.getTimestamp("last_stamp");
-				} else {
+				} else if (initializeMissingPersistentData) {
 					insertStamps(account.getId());
 				}
 				account.setPassportStamps(stamps);

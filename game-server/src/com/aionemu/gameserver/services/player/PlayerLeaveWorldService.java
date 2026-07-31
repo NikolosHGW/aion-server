@@ -25,6 +25,7 @@ import com.aionemu.gameserver.network.chatserver.ChatServer;
 import com.aionemu.gameserver.questEngine.QuestEngine;
 import com.aionemu.gameserver.questEngine.model.QuestEnv;
 import com.aionemu.gameserver.services.*;
+import com.aionemu.gameserver.services.ai.CompanionService;
 import com.aionemu.gameserver.services.conquerorAndProtectorSystem.ConquerorAndProtectorService;
 import com.aionemu.gameserver.services.findgroup.FindGroupService;
 import com.aionemu.gameserver.services.instance.InstanceService;
@@ -62,6 +63,11 @@ public class PlayerLeaveWorldService {
 	 */
 	public static void leaveWorld(Player player) {
 		AionConnection con = player.getClientConnection();
+		try {
+			CompanionService.getInstance().ownerLeaving(player, "owner-logout");
+		} catch (RuntimeException e) {
+			log.error("Failed to remove companion while owner was leaving world: {}", player, e);
+		}
 		player.setClientConnection(null); // this sets the player semi-offline, PacketSendUtility will not send packets anymore
 
 		WorldPosition pos = player.getPosition();

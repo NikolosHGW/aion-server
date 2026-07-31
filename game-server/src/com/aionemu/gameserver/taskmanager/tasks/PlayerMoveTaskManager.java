@@ -17,12 +17,21 @@ public class PlayerMoveTaskManager extends AbstractPeriodicTaskManager {
 		super(200);
 	}
 
-	public void addPlayer(Creature player) {
-		movingPlayers.put(player.getObjectId(), player);
+	public boolean addPlayer(Creature player) {
+		Creature existing = movingPlayers.putIfAbsent(player.getObjectId(), player);
+		return existing == null || existing == player;
 	}
 
 	public void removePlayer(Creature player) {
-		movingPlayers.remove(player.getObjectId());
+		movingPlayers.computeIfPresent(player.getObjectId(), (_, current) -> current == player ? null : current);
+	}
+
+	public boolean contains(Creature player) {
+		return movingPlayers.get(player.getObjectId()) == player;
+	}
+
+	public boolean containsObjectId(int objectId) {
+		return movingPlayers.containsKey(objectId);
 	}
 
 	@Override

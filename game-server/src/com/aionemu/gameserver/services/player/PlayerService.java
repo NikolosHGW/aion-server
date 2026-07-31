@@ -100,6 +100,13 @@ public class PlayerService {
 	}
 
 	public static Player getPlayer(int playerObjId, Account account) {
+		return getPlayer(playerObjId, account, true);
+	}
+
+	/**
+	 * Loads a complete player. Set {@code initializeMissingPersistentData} to false for read-only runtime materialization.
+	 */
+	public static Player getPlayer(int playerObjId, Account account, boolean initializeMissingPersistentData) {
 		// Player common data and appearance should be already loaded in account
 		PlayerAccountData playerAccountData = account.getPlayerAccountData(playerObjId);
 		PlayerCommonData pcd = playerAccountData.getPlayerCommonData();
@@ -122,7 +129,7 @@ public class PlayerService {
 		AbyssRankDAO.loadAbyssRank(player);
 		PlayerNpcFactionsDAO.loadNpcFactions(player);
 		MotionDAO.loadMotionList(player);
-		AccountPassportsDAO.loadPassport(player.getAccount());
+		AccountPassportsDAO.loadPassport(player.getAccount(), initializeMissingPersistentData);
 		player.setEffectController(new PlayerEffectController(player));
 		player.setFlyController(new FlyController(player));
 		PlayerStatFunctions.addPredefinedStatFunctions(player);
@@ -167,7 +174,7 @@ public class PlayerService {
 		// load craft cooldowns
 		CraftCooldownsDAO.loadCraftCooldowns(player);
 
-		PlayerLifeStatsDAO.loadPlayerLifeStat(player);
+		PlayerLifeStatsDAO.loadPlayerLifeStat(player, initializeMissingPersistentData);
 		PlayerEmotionListDAO.loadEmotions(player);
 		if (player.hasPermission(MembershipConfig.EMOTIONS_ALL)) {
 			for (int emotionId : EmotionLearnAction.getLearnableEmotionIds())

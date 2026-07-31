@@ -22,6 +22,10 @@ public class PlayerLifeStatsDAO {
 	public static final String UPDATE_QUERY = "UPDATE player_life_stats set `hp`=?, `mp`=?, `fp`=? WHERE `player_id`=?";
 
 	public static void loadPlayerLifeStat(Player player) {
+		loadPlayerLifeStat(player, true);
+	}
+
+	public static void loadPlayerLifeStat(Player player, boolean initializeMissingPersistentData) {
 		try (Connection con = DatabaseFactory.getConnection(); PreparedStatement stmt = con.prepareStatement(SELECT_QUERY)) {
 			stmt.setInt(1, player.getObjectId());
 			try (ResultSet rset = stmt.executeQuery()) {
@@ -30,7 +34,7 @@ public class PlayerLifeStatsDAO {
 					lifeStats.setCurrentHp(rset.getInt("hp"));
 					lifeStats.setCurrentMp(rset.getInt("mp"));
 					lifeStats.setCurrentFp(rset.getInt("fp"));
-				} else
+				} else if (initializeMissingPersistentData)
 					insertPlayerLifeStat(player);
 			}
 		} catch (Exception e) {

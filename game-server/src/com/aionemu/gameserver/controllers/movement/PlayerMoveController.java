@@ -4,9 +4,13 @@ import com.aionemu.gameserver.configs.main.FallDamageConfig;
 import com.aionemu.gameserver.model.gameobjects.player.Player;
 import com.aionemu.gameserver.network.aion.serverpackets.SM_ATTACK_STATUS.LOG;
 import com.aionemu.gameserver.network.aion.serverpackets.SM_ATTACK_STATUS.TYPE;
+import com.aionemu.gameserver.network.aion.serverpackets.SM_MOVE;
 import com.aionemu.gameserver.services.player.PlayerReviveService;
 import com.aionemu.gameserver.skillengine.model.Skill;
+import com.aionemu.gameserver.taskmanager.tasks.PlayerMoveTaskManager;
+import com.aionemu.gameserver.utils.PacketSendUtility;
 import com.aionemu.gameserver.utils.stats.StatFunctions;
+import com.aionemu.gameserver.world.World;
 import com.aionemu.gameserver.world.WorldPosition;
 
 /**
@@ -23,6 +27,33 @@ public class PlayerMoveController extends PlayableMoveController<Player> {
 
 	public PlayerMoveController(Player owner) {
 		super(owner);
+	}
+
+	/**
+	 * Starts movement calculated by the server without emulating a client movement packet.
+	 */
+	public boolean startServerControlledMove(float x, float y, float z, byte heading) {
+		if (!owner.isSpawned() || !owner.canPerformMove())
+			return false;
+
+		setNewDirection(x, y, z, heading);
+		World.getInstance().updatePosition(owner, owner.getX(), owner.getY(), owner.getZ(), heading, false);
+		updateLastMove();
+		started.set(true);
+		setInMove(true);
+		movementMask = MovementMask.NPC_STARTMOVE;
+		if (!PlayerMoveTaskManager.getInstance().addPlayer(owner)) {
+			started.set(false);
+			setInMove(false);
+			movementMask = MovementMask.IMMEDIATE;
+			return false;
+		}
+		PacketSendUtility.broadcastToSightedPlayers(owner, new SM_MOVE(owner));
+		return true;
+	}
+
+	public void stopServerControlledMove() {
+		abortMove();
 	}
 
 	@Override
