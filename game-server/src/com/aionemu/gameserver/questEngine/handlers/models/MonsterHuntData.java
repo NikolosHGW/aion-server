@@ -100,4 +100,16 @@ public class MonsterHuntData extends XMLQuest {
 		}
 		return null;
 	}
+
+	public List<Integer> getStartNpcIdsReadOnly() {
+		return startNpcIds == null ? List.of() : List.copyOf(startNpcIds);
+	}
+
+	public List<Integer> getEndNpcIdsReadOnly() {
+		return endNpcIds == null ? getStartNpcIdsReadOnly() : List.copyOf(endNpcIds);
+	}
+
+	public boolean hasUnsupportedAutomaticStart() {
+		return aggroNpcIds != null && !aggroNpcIds.isEmpty() || invasionWorld != 0 || startZone != null || startDistanceNpcId != 0;
+	}
 }

@@ -15,6 +15,15 @@ import com.aionemu.gameserver.model.account.Account;
 import com.aionemu.gameserver.model.account.PlayerAccountData;
 import com.aionemu.gameserver.model.gameobjects.player.Player;
 import com.aionemu.gameserver.services.AccountService;
+import com.aionemu.gameserver.services.ai.quest.CompanionGoalSession;
+import com.aionemu.gameserver.services.ai.quest.CompanionGoalSession.ChoiceResult;
+import com.aionemu.gameserver.services.ai.quest.CompanionGoalSession.ChoiceStatus;
+import com.aionemu.gameserver.services.ai.quest.QuestGoalCandidateProvider;
+import com.aionemu.gameserver.services.ai.quest.QuestGoalPlan;
+import com.aionemu.gameserver.services.ai.quest.QuestGoalPlanner;
+import com.aionemu.gameserver.services.ai.quest.QuestGoalPlanner.CandidateAssessment;
+import com.aionemu.gameserver.services.ai.quest.QuestGoalReason;
+import com.aionemu.gameserver.services.ai.quest.ReadOnlyQuestEligibility;
 import com.aionemu.gameserver.services.player.PlayerService;
 import com.aionemu.gameserver.taskmanager.tasks.PlayerMoveTaskManager;
 import com.aionemu.gameserver.utils.PositionUtil;
@@ -29,6 +38,9 @@ public final class CompanionService {
 	private final SyntheticPlayerRuntime runtime = SyntheticPlayerRuntime.getInstance();
 	private final ServerControlledPlayerRegistry registry = runtime.getRegistry();
 	private final SyntheticPlayerScheduler scheduler = runtime.getScheduler();
+	private final QuestGoalPlanner goalPlanner = new QuestGoalPlanner();
+	private final QuestGoalCandidateProvider goalCandidateProvider = new QuestGoalCandidateProvider();
+	private final ReadOnlyQuestEligibility goalEligibility = new ReadOnlyQuestEligibility();
 	private volatile CompanionSession session;
 	private volatile String lastRemovalReason = "";
 
@@ -75,10 +87,12 @@ public final class CompanionService {
 			companion.getCommonData().setName(runtimeName);
 
 			CompanionController controller = new CompanionController(new PlayerCompanionContext(owner, companion),
-				new DefaultPlayerActionGateway(companion, owner), settings, this::dismissFromRuntime, System::currentTimeMillis);
+				new DefaultPlayerActionGateway(companion, owner), settings, this::dismissFromRuntime, System::currentTimeMillis,
+				this::maintainGoalSession);
 			controlledPlayer = new ServerControlledPlayer(companion, templateDatabaseName, runtimeName, SyntheticPlayerRole.COMPANION, controller,
 				() -> AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED, this::dismissFromRuntime);
-			CompanionSession newSession = new CompanionSession(owner, controlledPlayer, controller);
+			CompanionSession newSession = new CompanionSession(owner, controlledPlayer, controller,
+				new CompanionGoalSession(owner.getObjectId(), companion.getObjectId()));
 			ServerControlledPlayer finalControlledPlayer = controlledPlayer;
 
 			SpawnTransaction.execute(new SpawnTransaction.Steps() {
@@ -144,6 +158,90 @@ public final class CompanionService {
 		requireOwner(requester).controller().stay();
 	}
 
+	public synchronized QuestGoalPlan proposeGoal(Player requester) {
+		requireGoalFeatureEnabled();
+		CompanionSession current = requireOwner(requester);
+		QuestGoalPlanner.ProposalResult proposal = buildGoalProposal(requester);
+		if (!proposal.success())
+			throw new IllegalStateException(proposal.reason() + "; rejections=" + proposal.rejections());
+		current.goalSession().offer(proposal.plan());
+		log.info("AI_COMPANION_GOAL action=OFFERED ownerObjectId={} companionObjectId={} questId={} persistence=false",
+			requester.getObjectId(), current.controlledPlayer().getObjectId(), proposal.plan().questId());
+		return proposal.plan();
+	}
+
+	public synchronized ChoiceResult chooseGoal(Player requester) {
+		CompanionSession current = session;
+		if (!AIConfig.ENABLED || !AIConfig.COMPANIONS_ENABLED || !AIConfig.COMPANION_QUEST_GOALS_ENABLED) {
+			if (current != null)
+				current.goalSession().clear();
+			return logChoice(requester, current, ChoiceResult.ineligible(QuestGoalReason.FEATURE_DISABLED));
+		}
+		if (current == null)
+			return logChoice(requester, null, ChoiceResult.noOffer());
+		if (current.owner() != requester)
+			return logChoice(requester, current, current.goalSession().rejectSessionMismatch());
+
+		ServerControlledPlayer controlled = current.controlledPlayer();
+		if (registry.getActive(SyntheticPlayerRole.COMPANION) != controlled || controlled.getState() != SyntheticPlayerState.ACTIVE
+			|| current.goalSession().companionObjectId() != controlled.getObjectId())
+			return logChoice(requester, current, current.goalSession().rejectSessionMismatch());
+
+		QuestGoalPlan offered = current.goalSession().offered();
+		if (offered == null)
+			return logChoice(requester, current,
+				current.goalSession().choose(requester.getObjectId(), controlled.getObjectId(), null));
+
+		List<Integer> allowedIds;
+		try {
+			allowedIds = QuestGoalCandidateProvider.parseAllowedQuestIds(AIConfig.COMPANION_QUEST_GOAL_ALLOWED_IDS);
+		} catch (IllegalArgumentException e) {
+			return logChoice(requester, current,
+				current.goalSession().revalidationFailed(requester.getObjectId(), controlled.getObjectId(), QuestGoalReason.INVALID_ALLOWLIST));
+		}
+		if (!allowedIds.contains(offered.questId()))
+			return logChoice(requester, current,
+				current.goalSession().revalidationFailed(requester.getObjectId(), controlled.getObjectId(), QuestGoalReason.INVALID_ALLOWLIST));
+
+		QuestGoalCandidateProvider.CandidateResult candidate = goalCandidateProvider.provide(requester, offered.questId());
+		if (!candidate.success())
+			return logChoice(requester, current,
+				current.goalSession().revalidationFailed(requester.getObjectId(), controlled.getObjectId(), candidate.reason()));
+		ReadOnlyQuestEligibility.EligibilityResult eligibility = goalEligibility.check(requester, offered.questId());
+		if (!eligibility.eligible())
+			return logChoice(requester, current,
+				current.goalSession().revalidationFailed(requester.getObjectId(), controlled.getObjectId(), eligibility.reason()));
+
+		return logChoice(requester, current,
+			current.goalSession().choose(requester.getObjectId(), controlled.getObjectId(), candidate.plan()));
+	}
+
+	private ChoiceResult logChoice(Player requester, CompanionSession current, ChoiceResult result) {
+		int companionObjectId = current == null ? 0 : current.controlledPlayer().getObjectId();
+		if (result.status() == ChoiceStatus.CHOSEN) {
+			log.info("AI_COMPANION_GOAL action=CHOSEN ownerObjectId={} companionObjectId={} questId={} reason={} questAccepted=false persistence=false",
+				requester.getObjectId(), companionObjectId, result.questId(), result.reason());
+		} else {
+			log.warn("AI_COMPANION_GOAL action={} ownerObjectId={} companionObjectId={} questId={} reason={} questAccepted=false persistence=false",
+				result.status() == ChoiceStatus.STALE_OFFER ? "STALE" : result.status(), requester.getObjectId(), companionObjectId,
+				result.questId(), result.reason());
+		}
+		return result;
+	}
+
+	public synchronized boolean clearGoal(Player requester) {
+		CompanionSession current = requireOwner(requester);
+		boolean changed = current.goalSession().clear();
+		log.info("AI_COMPANION_GOAL action=CLEARED ownerObjectId={} companionObjectId={} changed={} reason=admin-command persistence=false",
+			requester.getObjectId(), current.controlledPlayer().getObjectId(), changed);
+		return changed;
+	}
+
+	public synchronized String getGoalStatus(Player requester) {
+		CompanionSession current = requireOwner(requester);
+		return "questGoalFeatureEnabled=" + AIConfig.COMPANION_QUEST_GOALS_ENABLED + ", " + current.goalSession().status();
+	}
+
 	public synchronized boolean dismiss(Player requester, String reason) {
 		CompanionSession current = session;
 		if (current == null)
@@ -202,7 +300,39 @@ public final class CompanionService {
 			+ ", followStartDistance=" + AIConfig.COMPANION_FOLLOW_START_DISTANCE
 			+ ", followStopDistance=" + AIConfig.COMPANION_FOLLOW_STOP_DISTANCE
 			+ ", lastBlockedReason=" + current.controller().getLastBlockedReason()
+			+ ", questGoalFeatureEnabled=" + AIConfig.COMPANION_QUEST_GOALS_ENABLED
+			+ ", " + current.goalSession().status()
 			+ ", lastRemovalReason=" + lastRemovalReason;
+	}
+
+	private synchronized void maintainGoalSession() {
+		CompanionSession current = session;
+		if (current != null && (!AIConfig.ENABLED || !AIConfig.COMPANIONS_ENABLED || !AIConfig.COMPANION_QUEST_GOALS_ENABLED)
+			&& current.goalSession().clear())
+			log.info("AI_COMPANION_GOAL action=CLEARED ownerObjectId={} companionObjectId={} changed=true reason=feature-disabled persistence=false",
+				current.owner().getObjectId(), current.controlledPlayer().getObjectId());
+	}
+
+	private void requireGoalFeatureEnabled() {
+		CompanionPreflight.requireEnabled(AIConfig.ENABLED, AIConfig.COMPANIONS_ENABLED);
+		if (!AIConfig.COMPANION_QUEST_GOALS_ENABLED)
+			throw new IllegalStateException(QuestGoalReason.FEATURE_DISABLED.name());
+	}
+
+	private QuestGoalPlanner.ProposalResult buildGoalProposal(Player owner) {
+		List<Integer> allowedIds = QuestGoalCandidateProvider.parseAllowedQuestIds(AIConfig.COMPANION_QUEST_GOAL_ALLOWED_IDS);
+		List<CandidateAssessment> assessments = new ArrayList<>();
+		for (int questId : allowedIds) {
+			QuestGoalCandidateProvider.CandidateResult candidate = goalCandidateProvider.provide(owner, questId);
+			if (!candidate.success()) {
+				assessments.add(CandidateAssessment.reject(questId, candidate.reason()));
+				continue;
+			}
+			ReadOnlyQuestEligibility.EligibilityResult eligibility = goalEligibility.check(owner, questId);
+			assessments.add(eligibility.eligible() ? CandidateAssessment.accept(candidate.plan())
+				: CandidateAssessment.reject(questId, eligibility.reason()));
+		}
+		return goalPlanner.propose(owner.getLevel(), assessments);
 	}
 
 	private synchronized void dismissFromRuntime(String reason) {
@@ -287,6 +417,7 @@ public final class CompanionService {
 		Player companion = controlled.getPlayer();
 		controlled.beginRemoval();
 		current.controller().beginRemoval();
+		current.goalSession().clear();
 		List<RuntimeException> failures = new ArrayList<>();
 		attemptCleanup("scheduler", () -> scheduler.unregister(controlled), failures);
 		attemptCleanup("movement", controlled::stopMovement, failures);
@@ -400,7 +531,8 @@ public final class CompanionService {
 		};
 	}
 
-	private record CompanionSession(Player owner, ServerControlledPlayer controlledPlayer, CompanionController controller) {
+	private record CompanionSession(Player owner, ServerControlledPlayer controlledPlayer, CompanionController controller,
+		CompanionGoalSession goalSession) {
 	}
 
 	private static final class SingletonHolder {

@@ -12,6 +12,7 @@ public final class CompanionController implements ServerPlayerController {
 	private final CompanionFollowSettings settings;
 	private final Consumer<String> removalRequest;
 	private final LongSupplier currentTimeMillis;
+	private final Runnable runtimeMaintenance;
 	private CompanionMode mode = CompanionMode.FOLLOWING;
 	private boolean followRequested = true;
 	private boolean movementIssued;
@@ -21,15 +22,23 @@ public final class CompanionController implements ServerPlayerController {
 
 	CompanionController(CompanionContext context, PlayerActionGateway gateway, CompanionFollowSettings settings, Consumer<String> removalRequest,
 			LongSupplier currentTimeMillis) {
+		this(context, gateway, settings, removalRequest, currentTimeMillis, () -> {
+		});
+	}
+
+	CompanionController(CompanionContext context, PlayerActionGateway gateway, CompanionFollowSettings settings, Consumer<String> removalRequest,
+			LongSupplier currentTimeMillis, Runnable runtimeMaintenance) {
 		this.context = context;
 		this.gateway = gateway;
 		this.settings = settings;
 		this.removalRequest = removalRequest;
 		this.currentTimeMillis = currentTimeMillis;
+		this.runtimeMaintenance = runtimeMaintenance;
 	}
 
 	@Override
 	public void tick() {
+		runtimeMaintenance.run();
 		String removalReason = getRemovalReason();
 		if (removalReason != null) {
 			removalRequest.accept(removalReason);

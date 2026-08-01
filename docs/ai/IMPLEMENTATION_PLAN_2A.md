@@ -1,8 +1,10 @@
 # Этап 2A: PlayerActionGateway и минимальный AI-компаньон
 
-Статус: реализован автоматически; требуется ручная приёмка двумя клиентами
+Статус: принят вручную владельцем проекта
 
 Дата реализации: 2026-07-31
+
+Дата ручной приёмки: 2026-08-01
 
 Зависимости:
 
@@ -190,7 +192,7 @@ Owner logout вызывает cleanup до сохранения обычного
 transaction rollback, idempotent cleanup, route spike, container identity и
 отсутствие template persistence.
 
-## 9. Ручная приёмка двумя клиентами
+## 9. Ручная приёмка двумя клиентами — выполнена
 
 1. Сохранить baseline DB-полей template: `name`, `x`, `y`, `z`, `heading`,
    `world_id`, `online`, account `activated`.
@@ -225,6 +227,36 @@ transaction rollback, idempotent cleanup, route spike, container identity и
 19. Повторить этап-1 smoke test `//aiplayer`.
 20. Сравнить DB baseline: все template/account поля должны совпасть.
 
+### 9.1. Подтверждённые результаты
+
+Владелец проекта провёл сценарий двумя реальными клиентами и
+подтвердил:
+
+- companion виден как обычный `Player` с runtime-префиксом `[AI]`;
+- `summon` создаёт ровно один companion;
+- `follow` плавно двигает companion через штатный movement path;
+- `followStartDistance`/`followStopDistance` устраняют start/stop jitter;
+- `stay` останавливает companion, а `follow` после `stay` возобновляет
+  следование;
+- потеря LoS переводит companion в `BLOCKED`; он не телепортируется и не
+  проходит сквозь препятствия;
+- поздний наблюдатель видит актуальную позицию, а повторный вход в
+  visibility radius не создаёт duplicate;
+- смена map/instance и logout/disconnect владельца корректно удаляют
+  companion;
+- `dismiss` и повторный `dismiss` безопасны; runtime-disable также удаляет
+  companion;
+- коллизия с `//aiplayer` отклоняется без частичной регистрации;
+- regression smoke-test этапа 1 пройден;
+- DB-поля template character `Cool` не изменились, template account `Test`
+  сохранил `activated = 0`;
+- регрессий обычных игроков в проведённом сценарии не обнаружено.
+
+Граница доказательства: эта приёмка подтверждает только presentation,
+single-companion lifecycle, follow/stay, LoS/collision blocking, visibility и
+transient cleanup этапа 2A. Она не подтверждает combat, skills, quests,
+groups, inventory, loot, economy или persistence.
+
 ## 10. Ограничения и rollback
 
 Ограничения:
@@ -246,5 +278,5 @@ Rollback:
 5. повторить полный reactor и ручной regression smoke этапа 1;
 6. data/SQL rollback не нужен.
 
-После ручной приёмки работа останавливается. Read-only quest planner, combat и
-этап 2B требуют отдельного явного подтверждения.
+Этап 2A принят. Read-only quest planner, combat и любое продолжение
+по-прежнему требуют отдельного явного подтверждения.

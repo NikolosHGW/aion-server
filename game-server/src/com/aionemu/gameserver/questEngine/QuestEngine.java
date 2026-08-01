@@ -889,6 +889,12 @@ public class QuestEngine implements GameEngine {
 		return questHandlers.containsKey(questId);
 	}
 
+	/** Read-only handler type lookup for fail-closed consumers. */
+	public Class<? extends AbstractQuestHandler> getQuestHandlerType(int questId) {
+		AbstractQuestHandler handler = questHandlers.get(questId);
+		return handler == null ? null : handler.getClass();
+	}
+
 	public void addQuestHandler(AbstractQuestHandler questHandler) {
 		int questId = questHandler.getQuestId();
 		if (questHandlers.putIfAbsent(questId, questHandler) != null)

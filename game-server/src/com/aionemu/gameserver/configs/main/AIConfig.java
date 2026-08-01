@@ -18,6 +18,12 @@ public class AIConfig {
 	@Property(key = "ai.companions.enabled", defaultValue = "false")
 	public static boolean COMPANIONS_ENABLED;
 
+	@Property(key = "ai.companions.quest_goals.enabled", defaultValue = "false")
+	public static boolean COMPANION_QUEST_GOALS_ENABLED;
+
+	@Property(key = "ai.companions.quest_goals.allowed_quest_ids", defaultValue = "")
+	public static String COMPANION_QUEST_GOAL_ALLOWED_IDS;
+
 	@Property(key = "ai.companions.template_account_id", defaultValue = "0")
 	public static int COMPANION_TEMPLATE_ACCOUNT_ID;
 

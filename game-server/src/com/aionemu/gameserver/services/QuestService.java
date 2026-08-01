@@ -397,6 +397,98 @@ public final class QuestService {
 		return false;
 	}
 
+	public enum StartEligibilityReason {
+		ELIGIBLE,
+		UNKNOWN_QUEST,
+		ALREADY_ACTIVE,
+		NOT_REPEATABLE,
+		WRONG_RACE,
+		LEVEL_TOO_LOW,
+		LEVEL_TOO_HIGH,
+		WRONG_CLASS,
+		WRONG_GENDER,
+		RANK_TOO_LOW,
+		START_CONDITION_NOT_MET,
+		MISSING_INVENTORY_ITEM,
+		COMBINE_SKILL_NOT_MET,
+		NPC_FACTION_UNAVAILABLE,
+		QUEST_LOG_FULL,
+		CHECK_FAILED
+	}
+
+	public record StartEligibilityResult(boolean eligible, StartEligibilityReason reason) {
+
+		private static StartEligibilityResult allow() {
+			return new StartEligibilityResult(true, StartEligibilityReason.ELIGIBLE);
+		}
+
+		private static StartEligibilityResult reject(StartEligibilityReason reason) {
+			return new StartEligibilityResult(false, reason);
+		}
+	}
+
+	/**
+	 * Full start eligibility without feedback or mutation. Existing checkStartConditions overloads intentionally keep their legacy semantics.
+	 */
+	public static StartEligibilityResult checkStartConditionsFullSilentReadOnly(Player player, int questId) {
+		try {
+			QuestTemplate template = DataManager.QUEST_DATA.getQuestById(questId);
+			if (template == null)
+				return StartEligibilityResult.reject(StartEligibilityReason.UNKNOWN_QUEST);
+
+			QuestState qs = player.getQuestStateList().getQuestState(questId);
+			if (qs != null) {
+				if (qs.getStatus() == QuestStatus.START || qs.getStatus() == QuestStatus.REWARD)
+					return StartEligibilityResult.reject(StartEligibilityReason.ALREADY_ACTIVE);
+				if (qs.getStatus() == QuestStatus.COMPLETE && !qs.canRepeat())
+					return StartEligibilityResult.reject(StartEligibilityReason.NOT_REPEATABLE);
+			}
+
+			if (template.getRacePermitted() != null && template.getRacePermitted() != Race.PC_ALL && template.getRacePermitted() != player.getRace())
+				return StartEligibilityResult.reject(StartEligibilityReason.WRONG_RACE);
+			if (player.getLevel() < template.getMinlevelPermitted())
+				return StartEligibilityResult.reject(StartEligibilityReason.LEVEL_TOO_LOW);
+			if (template.getMaxlevelPermitted() != 0 && player.getLevel() > template.getMaxlevelPermitted())
+				return StartEligibilityResult.reject(StartEligibilityReason.LEVEL_TOO_HIGH);
+			if (!template.getClassPermitted().isEmpty() && !template.getClassPermitted().contains(player.getPlayerClass()))
+				return StartEligibilityResult.reject(StartEligibilityReason.WRONG_CLASS);
+			if (template.getGenderPermitted() != null && template.getGenderPermitted() != player.getGender())
+				return StartEligibilityResult.reject(StartEligibilityReason.WRONG_GENDER);
+			if (template.getRequiredRank() != 0 && player.getAbyssRank().getRank().getId() < template.getRequiredRank())
+				return StartEligibilityResult.reject(StartEligibilityReason.RANK_TOO_LOW);
+
+			int fulfilledStartConditions = 0;
+			for (XMLStartCondition startCondition : template.getXMLStartConditions()) {
+				if (startCondition.checkFullSilentReadOnly(player))
+					fulfilledStartConditions++;
+			}
+			if (fulfilledStartConditions < template.getRequiredConditionCount())
+				return StartEligibilityResult.reject(StartEligibilityReason.START_CONDITION_NOT_MET);
+
+			QuestEnv env = new QuestEnv(null, player, questId);
+			if (!inventoryItemCheck(env, false))
+				return StartEligibilityResult.reject(StartEligibilityReason.MISSING_INVENTORY_ITEM);
+			if (!checkCombineSkill(env, false))
+				return StartEligibilityResult.reject(StartEligibilityReason.COMBINE_SKILL_NOT_MET);
+
+			if (template.getNpcFactionId() != 0) {
+				if (!template.isTimeBased() && !player.getNpcFactions().canStartQuest(template))
+					return StartEligibilityResult.reject(StartEligibilityReason.NPC_FACTION_UNAVAILABLE);
+				NpcFaction faction = player.getNpcFactions().getFactionById(template.getNpcFactionId());
+				if (faction == null || !faction.isActive())
+					return StartEligibilityResult.reject(StartEligibilityReason.NPC_FACTION_UNAVAILABLE);
+			}
+
+			if (!template.isNoCount() && !checkQuestListSize(player.getQuestStateList())
+				&& !player.hasPermission(MembershipConfig.QUEST_LIMIT_DISABLED))
+				return StartEligibilityResult.reject(StartEligibilityReason.QUEST_LOG_FULL);
+			return StartEligibilityResult.allow();
+		} catch (Exception ex) {
+			log.error("QE: exception in full silent read-only start condition check (" + player + ", questId " + questId + ")", ex);
+			return StartEligibilityResult.reject(StartEligibilityReason.CHECK_FAILED);
+		}
+	}
+
 	public static boolean startQuest(QuestEnv env) {
 		return startQuest(env, QuestStatus.START, env.getDialogActionId() != NULL);
 	}

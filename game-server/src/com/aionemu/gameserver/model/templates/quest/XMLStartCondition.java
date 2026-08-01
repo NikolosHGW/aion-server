@@ -132,6 +132,37 @@ public class XMLStartCondition {
 			&& checkEquippedItems(player, warn) && isRequiredTitleDisplayed(player);
 	}
 
+	/**
+	 * Checks every start condition without sending feedback. Unlike {@link #check(Player, boolean)} with {@code warn=false}, required equipment is not
+	 * skipped. This method is intended for read-only eligibility queries and must not be used to start a quest.
+	 */
+	public boolean checkFullSilentReadOnly(Player player) {
+		QuestStateList qsl = player.getQuestStateList();
+		return checkFinishedQuests(qsl) && checkUnfinishedQuests(qsl) && checkAcquiredQuests(qsl) && checkNoAcquiredQuests(qsl)
+			&& hasRequiredEquipment(player) && isRequiredTitleDisplayed(player);
+	}
+
+	private boolean hasRequiredEquipment(Player player) {
+		if (equipped != null) {
+			for (int itemId : equipped) {
+				if (!player.getEquipment().getEquippedItemIds().contains(itemId))
+					return false;
+			}
+		}
+		return true;
+	}
+
+	/** Returns a defensive prerequisite view for fail-closed metadata extraction. */
+	public List<FinishedQuestCond> getFinishedPreconditionsReadOnly() {
+		return finished == null ? List.of() : List.copyOf(finished);
+	}
+
+	/** The first goal-planner slice supports only finished-quest prerequisites. */
+	public boolean hasOnlyFinishedPreconditions() {
+		return (unfinished == null || unfinished.isEmpty()) && (noacquired == null || noacquired.isEmpty())
+			&& (acquired == null || acquired.isEmpty()) && (equipped == null || equipped.isEmpty()) && requiredTitle == 0;
+	}
+
 	public List<FinishedQuestCond> getFinishedPreconditions() {
 		return finished;
 	}
