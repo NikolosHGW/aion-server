@@ -35,6 +35,7 @@ import com.aionemu.gameserver.services.RespawnService;
 import com.aionemu.gameserver.services.abyss.AbyssPointsService;
 import com.aionemu.gameserver.services.drop.DropRegistrationService;
 import com.aionemu.gameserver.services.drop.DropService;
+import com.aionemu.gameserver.services.ai.combat.CombatContributionOwnerResolver;
 import com.aionemu.gameserver.services.event.EventService;
 import com.aionemu.gameserver.services.instance.InstanceScaler;
 import com.aionemu.gameserver.skillengine.model.Effect;
@@ -273,7 +274,7 @@ public class NpcController extends CreatureController<Npc> {
 
 	@Override
 	public void onAddHate(Creature attacker, boolean isNewInAggroList) {
-		if (isNewInAggroList && attacker instanceof Player) {
+		if (isNewInAggroList && attacker instanceof Player && !CombatContributionOwnerResolver.getInstance().isPersonalCompanion(attacker)) {
 			if (((Player) attacker).isInTeam()) {
 				for (Player player : ((Player) attacker).getCurrentTeam().filterMembers(m -> PositionUtil.isInRange(getOwner(), m, 50)))
 					QuestEngine.getInstance().onAddAggroList(new QuestEnv(getOwner(), player, 0));
@@ -301,7 +302,7 @@ public class NpcController extends CreatureController<Npc> {
 
 		Npc npc = getOwner();
 		ShoutEventHandler.onEnemyAttack((NpcAI) npc.getAi(), attacker);
-		if (actingCreature instanceof Player)
+		if (actingCreature instanceof Player && !CombatContributionOwnerResolver.getInstance().isPersonalCompanion(actingCreature))
 			QuestEngine.getInstance().onAttack(new QuestEnv(npc, (Player) actingCreature, 0));
 	}
 

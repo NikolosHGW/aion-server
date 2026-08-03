@@ -2,6 +2,7 @@ package com.aionemu.gameserver.services.ai;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,8 +14,15 @@ import com.aionemu.gameserver.geoEngine.math.Vector3f;
 import com.aionemu.gameserver.model.TaskId;
 import com.aionemu.gameserver.model.account.Account;
 import com.aionemu.gameserver.model.account.PlayerAccountData;
+import com.aionemu.gameserver.model.gameobjects.Creature;
 import com.aionemu.gameserver.model.gameobjects.player.Player;
 import com.aionemu.gameserver.services.AccountService;
+import com.aionemu.gameserver.services.ai.combat.CombatActionGateway;
+import com.aionemu.gameserver.services.ai.combat.CombatContributionOwnerResolver;
+import com.aionemu.gameserver.services.ai.combat.CombatNpcAllowlist;
+import com.aionemu.gameserver.services.ai.combat.CompanionCombatController;
+import com.aionemu.gameserver.services.ai.combat.DefaultCombatActionGateway;
+import com.aionemu.gameserver.services.ai.combat.OwnerAttackSignalSource;
 import com.aionemu.gameserver.services.ai.quest.CompanionGoalSession;
 import com.aionemu.gameserver.services.ai.quest.CompanionGoalSession.ChoiceResult;
 import com.aionemu.gameserver.services.ai.quest.CompanionGoalSession.ChoiceStatus;
@@ -41,6 +49,8 @@ public final class CompanionService {
 	private final QuestGoalPlanner goalPlanner = new QuestGoalPlanner();
 	private final QuestGoalCandidateProvider goalCandidateProvider = new QuestGoalCandidateProvider();
 	private final ReadOnlyQuestEligibility goalEligibility = new ReadOnlyQuestEligibility();
+	private final CombatContributionOwnerResolver contributionResolver = CombatContributionOwnerResolver.getInstance();
+	private final AtomicLong combatSessionIds = new AtomicLong();
 	private volatile CompanionSession session;
 	private volatile String lastRemovalReason = "";
 
@@ -86,13 +96,22 @@ public final class CompanionService {
 			companion.setPosition(spawnPosition);
 			companion.getCommonData().setName(runtimeName);
 
+			long combatSessionId = combatSessionIds.incrementAndGet();
+			OwnerAttackSignalSource combatSignalSource = new OwnerAttackSignalSource(owner, companion, combatSessionId, System::currentTimeMillis);
+			CombatActionGateway combatGateway = new DefaultCombatActionGateway(owner, companion, combatSessionId, contributionResolver,
+				this::isCombatFeatureEnabled, combatSignalSource::isEnabled, System::currentTimeMillis, AIConfig.COMPANION_COMBAT_OWNER_SIGNAL_TTL_MS,
+				AIConfig.COMPANION_COMBAT_ALLOWED_NPC_IDS);
+			CompanionCombatController combatController = new CompanionCombatController(owner.getObjectId(), companion.getObjectId(), combatSessionId,
+				combatSignalSource, combatGateway, this::isCombatFeatureEnabled, System::currentTimeMillis, AIConfig.COMPANION_COMBAT_OWNER_SIGNAL_TTL_MS);
 			CompanionController controller = new CompanionController(new PlayerCompanionContext(owner, companion),
-				new DefaultPlayerActionGateway(companion, owner), settings, this::dismissFromRuntime, System::currentTimeMillis,
-				this::maintainGoalSession);
+				new DefaultPlayerActionGateway(companion, owner), settings, this::dismissFromRuntime, System::currentTimeMillis, () -> {
+					maintainGoalSession();
+					combatController.tick();
+				});
 			controlledPlayer = new ServerControlledPlayer(companion, templateDatabaseName, runtimeName, SyntheticPlayerRole.COMPANION, controller,
 				() -> AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED, this::dismissFromRuntime);
 			CompanionSession newSession = new CompanionSession(owner, controlledPlayer, controller,
-				new CompanionGoalSession(owner.getObjectId(), companion.getObjectId()));
+				new CompanionGoalSession(owner.getObjectId(), companion.getObjectId()), combatSessionId, combatController);
 			ServerControlledPlayer finalControlledPlayer = controlledPlayer;
 
 			SpawnTransaction.execute(new SpawnTransaction.Steps() {
@@ -101,6 +120,7 @@ public final class CompanionService {
 				public void registerWrapper() {
 					registry.register(finalControlledPlayer);
 					session = newSession;
+					contributionResolver.register(finalControlledPlayer.getPlayer(), owner, combatSessionId);
 					finalControlledPlayer.markRegistered();
 				}
 
@@ -156,6 +176,21 @@ public final class CompanionService {
 
 	public synchronized void stay(Player requester) {
 		requireOwner(requester).controller().stay();
+	}
+
+	public synchronized boolean assistOn(Player requester) {
+		CompanionSession current = requireOwner(requester);
+		requireCombatFeatureEnabled();
+		return current.combatController().enableAssist();
+	}
+
+	public synchronized boolean assistOff(Player requester) {
+		CompanionSession current = requireOwner(requester);
+		return current.combatController().disableAssist("admin-command");
+	}
+
+	public synchronized String getCombatStatus(Player requester) {
+		return requireOwner(requester).combatController().status();
 	}
 
 	public synchronized QuestGoalPlan proposeGoal(Player requester) {
@@ -263,10 +298,30 @@ public final class CompanionService {
 			dismissSession(current, "shutdown");
 	}
 
+	public synchronized boolean isActiveCompanion(Player player) {
+		CompanionSession current = session;
+		return current != null && current.controlledPlayer().getPlayer() == player && current.controlledPlayer().getRole() == SyntheticPlayerRole.COMPANION
+			&& current.controlledPlayer().getState() == SyntheticPlayerState.ACTIVE
+			&& registry.getActive(SyntheticPlayerRole.COMPANION) == current.controlledPlayer()
+			&& contributionResolver.matches(player, current.owner(), current.combatSessionId(), true);
+	}
+
+	public synchronized void companionDied(Player player, Creature lastAttacker) {
+		CompanionSession current = session;
+		if (current == null || current.controlledPlayer().getPlayer() != player)
+			return;
+		String attacker = lastAttacker == null ? "unknown" : Integer.toString(lastAttacker.getObjectId());
+		log.info(
+			"AI_COMPANION_COMBAT action=SYNTHETIC_DEATH result=CLEANUP_REQUESTED ownerObjectId={} companionObjectId={} lastAttackerObjectId={} persistence=false",
+			current.owner().getObjectId(), player.getObjectId(), attacker);
+		dismissSession(current, "synthetic-death:last-attacker=" + attacker);
+	}
+
 	public String getStatus() {
 		CompanionSession current = session;
 		if (current == null)
-			return "active=false, flags=" + AIConfig.ENABLED + "/" + AIConfig.COMPANIONS_ENABLED + ", lastRemovalReason=" + lastRemovalReason;
+			return "active=false, flags=" + AIConfig.ENABLED + "/" + AIConfig.COMPANIONS_ENABLED + ", assistEnabled=false"
+				+ ", attackObserverAttached=false, combatFeatureEnabled=" + isCombatFeatureEnabled() + ", lastRemovalReason=" + lastRemovalReason;
 
 		Player owner = current.owner();
 		ServerControlledPlayer controlled = current.controlledPlayer();
@@ -300,6 +355,8 @@ public final class CompanionService {
 			+ ", followStartDistance=" + AIConfig.COMPANION_FOLLOW_START_DISTANCE
 			+ ", followStopDistance=" + AIConfig.COMPANION_FOLLOW_STOP_DISTANCE
 			+ ", lastBlockedReason=" + current.controller().getLastBlockedReason()
+			+ ", combatFeatureEnabled=" + isCombatFeatureEnabled()
+			+ ", " + current.combatController().status()
 			+ ", questGoalFeatureEnabled=" + AIConfig.COMPANION_QUEST_GOALS_ENABLED
 			+ ", " + current.goalSession().status()
 			+ ", lastRemovalReason=" + lastRemovalReason;
@@ -311,6 +368,19 @@ public final class CompanionService {
 			&& current.goalSession().clear())
 			log.info("AI_COMPANION_GOAL action=CLEARED ownerObjectId={} companionObjectId={} changed=true reason=feature-disabled persistence=false",
 				current.owner().getObjectId(), current.controlledPlayer().getObjectId());
+	}
+
+	private boolean isCombatFeatureEnabled() {
+		return AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED && AIConfig.COMPANION_COMBAT_ENABLED && AIConfig.COMPANION_BASIC_ATTACK_ENABLED
+			&& AIConfig.COMPANION_OWNER_ATTRIBUTION_ENABLED;
+	}
+
+	private void requireCombatFeatureEnabled() {
+		if (!isCombatFeatureEnabled())
+			throw new IllegalStateException("Companion combat feature is disabled");
+		if (AIConfig.COMPANION_COMBAT_OWNER_SIGNAL_TTL_MS < 250 || AIConfig.COMPANION_COMBAT_OWNER_SIGNAL_TTL_MS > 10000)
+			throw new IllegalStateException("Companion combat owner signal TTL must be between 250 and 10000 ms");
+		CombatNpcAllowlist.requireFirstSpikeOnly(AIConfig.COMPANION_COMBAT_ALLOWED_NPC_IDS);
 	}
 
 	private void requireGoalFeatureEnabled() {
@@ -416,12 +486,15 @@ public final class CompanionService {
 		ServerControlledPlayer controlled = current.controlledPlayer();
 		Player companion = controlled.getPlayer();
 		controlled.beginRemoval();
+		contributionResolver.beginRemoval(companion, current.combatSessionId());
+		current.combatController().beginRemoval(reason);
 		current.controller().beginRemoval();
 		current.goalSession().clear();
 		List<RuntimeException> failures = new ArrayList<>();
 		attemptCleanup("scheduler", () -> scheduler.unregister(controlled), failures);
 		attemptCleanup("movement", controlled::stopMovement, failures);
 		attemptCleanup("target", () -> companion.setTarget(null), failures);
+		attemptCleanup("life-tasks", () -> companion.getLifeStats().cancelAllTasks(), failures);
 		attemptCleanup("world", () -> {
 			if (World.getInstance().findVisibleObject(companion.getObjectId()) == companion)
 				World.getInstance().removeObject(companion);
@@ -432,6 +505,7 @@ public final class CompanionService {
 				session = null;
 			controlled.markRemoved();
 			attemptCleanup("runtime-references", () -> releaseRuntimeOnlyReferences(companion, controlled.getTemplateDatabaseName()), failures);
+			attemptCleanup("combat-attribution", () -> contributionResolver.unregister(companion, current.combatSessionId()), failures);
 		}
 		lastRemovalReason = reason;
 		log.info(
@@ -472,6 +546,10 @@ public final class CompanionService {
 			retainedBy.add("movementManager");
 		if (session == current)
 			retainedBy.add("companionSession");
+		if (current.combatController().isObserverAttached())
+			retainedBy.add("ownerAttackObserver");
+		if (contributionResolver.isPersonalCompanion(companion))
+			retainedBy.add("combatAttribution");
 		if (!retainedBy.isEmpty())
 			throw new IllegalStateException("Companion cleanup incomplete; retained by " + retainedBy);
 	}
@@ -532,7 +610,7 @@ public final class CompanionService {
 	}
 
 	private record CompanionSession(Player owner, ServerControlledPlayer controlledPlayer, CompanionController controller,
-		CompanionGoalSession goalSession) {
+		CompanionGoalSession goalSession, long combatSessionId, CompanionCombatController combatController) {
 	}
 
 	private static final class SingletonHolder {

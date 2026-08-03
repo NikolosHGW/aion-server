@@ -47,7 +47,10 @@ import com.aionemu.gameserver.questEngine.QuestEngine;
 import com.aionemu.gameserver.questEngine.model.QuestEnv;
 import com.aionemu.gameserver.restrictions.PlayerRestrictions;
 import com.aionemu.gameserver.services.*;
+import com.aionemu.gameserver.services.ai.CompanionService;
 import com.aionemu.gameserver.services.ai.ServerControlledPlayerService;
+import com.aionemu.gameserver.services.ai.combat.CompanionCombatPresentation;
+import com.aionemu.gameserver.services.ai.combat.CombatContributionOwnerResolver;
 import com.aionemu.gameserver.services.conquerorAndProtectorSystem.ConquerorAndProtectorService;
 import com.aionemu.gameserver.services.drop.DropService;
 import com.aionemu.gameserver.services.instance.InstanceService;
@@ -278,6 +281,13 @@ public class PlayerController extends CreatureController<Player> {
 	@Override
 	public void onDie(Creature lastAttacker) {
 		Player player = getOwner();
+		if (CompanionService.getInstance().isActiveCompanion(player)) {
+			player.getController().cancelCurrentSkill(null);
+			super.onDie(lastAttacker);
+			player.getLifeStats().cancelAllTasks();
+			CompanionService.getInstance().companionDied(player, lastAttacker);
+			return;
+		}
 		player.getController().cancelCurrentSkill(null);
 		setRebirthReviveInfo();
 		Creature master = lastAttacker.getMaster();
@@ -423,12 +433,13 @@ public class PlayerController extends CreatureController<Player> {
 			return;
 		}
 
-		if (target instanceof Npc) {
+		boolean personalCompanion = target instanceof Npc && CombatContributionOwnerResolver.getInstance().isPersonalCompanion(getOwner());
+		if (target instanceof Npc && !personalCompanion) {
 			QuestEngine.getInstance().onAttack(new QuestEnv(target, getOwner(), 0));
 		}
 
 		int attackSpeed = gameStats.getAttackSpeed().getCurrent();
-
+		boolean activeCompanion = personalCompanion && CompanionService.getInstance().isActiveCompanion(getOwner());
 		long milis = System.currentTimeMillis();
 		// network ping..
 		if (milis - lastAttackMillis + 300 < attackSpeed) {
@@ -438,7 +449,13 @@ public class PlayerController extends CreatureController<Player> {
 		}
 		lastAttackMillis = milis;
 
-		super.attackTarget(target, time, true);
+		if (activeCompanion) {
+			getOwner().getPosition().setH(PositionUtil.getHeadingTowards(getOwner(), target));
+			CompanionCombatPresentation.prepareBasicAttack(getOwner(), target);
+			super.attackTarget(target, 0, true);
+		} else {
+			super.attackTarget(target, time, true);
+		}
 	}
 
 	@Override
@@ -457,7 +474,7 @@ public class PlayerController extends CreatureController<Player> {
 		cancelUseItem();
 		super.onAttack(attacker, effect, type, damage, notifyAttack, logId, attackStatus, hopType);
 
-		if (attacker instanceof Npc) {
+		if (attacker instanceof Npc && !CombatContributionOwnerResolver.getInstance().isPersonalCompanion(getOwner())) {
 			ShoutEventHandler.onAttack((NpcAI) attacker.getAi(), getOwner());
 			QuestEngine.getInstance().onAttack(new QuestEnv(attacker, getOwner(), 0));
 		}

@@ -15,6 +15,7 @@ public class Companion extends AdminCommand {
 			"<summon> - Spawn the configured companion template and bind it to you.",
 			"<follow> - Resume following you.",
 			"<stay> - Stop and remain in the world.",
+			"<assist on|off|status> - Arm or disarm one-hit reactions to owner attack events.",
 			"<dismiss> - Remove the companion without persistence.",
 			"<status> - Show owner, lifecycle, movement and world diagnostics.",
 			"<today> - Offer one read-only quest goal from the configured allowlist.",
@@ -23,6 +24,10 @@ public class Companion extends AdminCommand {
 
 	@Override
 	public void execute(Player admin, String... params) {
+		if (params.length == 2 && params[0].equalsIgnoreCase("assist")) {
+			executeAssist(admin, params[1]);
+			return;
+		}
 		if (params.length == 2 && params[0].equalsIgnoreCase("goal")) {
 			executeGoal(admin, params[1]);
 			return;
@@ -59,6 +64,26 @@ public class Companion extends AdminCommand {
 				QuestGoalPlan plan = service.proposeGoal(admin);
 				sendInfo(admin, QuestGoalCommandFormatter.formatProposal(plan));
 			}
+			default -> sendInfo(admin);
+		}
+	}
+
+	private void executeAssist(Player admin, String action) {
+		CompanionService service = CompanionService.getInstance();
+		switch (action.toLowerCase()) {
+			case "on" -> {
+				boolean changed = service.assistOn(admin);
+				sendInfo(admin, changed ? "Companion assist enabled; waiting for your next real attack event."
+					: "Companion assist is already enabled.");
+				sendInfo(admin, service.getCombatStatus(admin));
+			}
+			case "off" -> {
+				boolean changed = service.assistOff(admin);
+				sendInfo(admin, changed ? "Companion assist disabled and pending combat event cleared."
+					: "Companion assist is already disabled.");
+				sendInfo(admin, service.getCombatStatus(admin));
+			}
+			case "status" -> sendInfo(admin, service.getCombatStatus(admin));
 			default -> sendInfo(admin);
 		}
 	}

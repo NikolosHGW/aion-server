@@ -6,6 +6,8 @@ import java.util.HashMap;
 import java.util.Map;
 
 import com.aionemu.gameserver.model.gameobjects.Creature;
+import com.aionemu.gameserver.services.ai.combat.CombatContributionOwnerResolver;
+import com.aionemu.gameserver.services.ai.combat.CombatContributionOwnerResolver.Context;
 
 /**
  * List of combined creature damages, grouped by their master (if present, like with Summons and summoned objects).
@@ -18,7 +20,7 @@ public class DamageList {
 		for (AggroInfo aggroInfo : aggroInfos) {
 			if (aggroInfo.getDamage() <= 0)
 				continue;
-			Creature attackerMaster = aggroInfo.getAttacker().getMaster();
+			Creature attackerMaster = CombatContributionOwnerResolver.getInstance().resolve(aggroInfo.getAttacker(), owner, Context.FINAL_REWARD);
 			// Don't include damage from creatures outside the known list.
 			if (!owner.getKnownList().knows(attackerMaster))
 				continue;

@@ -1,9 +1,13 @@
 package com.aionemu.gameserver.controllers.attack;
 
 import java.util.Comparator;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.stream.Stream;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.aionemu.commons.utils.Rnd;
 import com.aionemu.gameserver.dataholders.DataManager;
@@ -13,6 +17,8 @@ import com.aionemu.gameserver.model.gameobjects.VisibleObject;
 import com.aionemu.gameserver.model.gameobjects.player.Player;
 import com.aionemu.gameserver.skillengine.effect.AbnormalState;
 import com.aionemu.gameserver.skillengine.model.HopType;
+import com.aionemu.gameserver.services.ai.combat.CombatContributionOwnerResolver;
+import com.aionemu.gameserver.services.ai.combat.CombatContributionOwnerResolver.Context;
 import com.aionemu.gameserver.utils.PositionUtil;
 import com.aionemu.gameserver.utils.ThreadPoolManager;
 import com.aionemu.gameserver.utils.stats.StatFunctions;
@@ -22,9 +28,11 @@ import com.aionemu.gameserver.world.geo.GeoService;
  * @author ATracer, KKnD
  */
 public class AggroList {
+	private static final Logger log = LoggerFactory.getLogger(AggroList.class);
 
 	protected final Creature owner;
 	private final ConcurrentHashMap<Integer, AggroInfo> aggroList = new ConcurrentHashMap<>();
+	private final Object contributionLock = new Object();
 	private Future<?> hateReductionTask;
 
 	public AggroList(Creature owner) {
@@ -107,15 +115,26 @@ public class AggroList {
 	}
 
 	public void remove(Creature creature, boolean transferDamagesToMaster) {
-		AggroInfo aggroInfo = aggroList.remove(creature.getObjectId());
-		if (transferDamagesToMaster && aggroInfo != null)
-			transferDamagesToMaster(aggroInfo);
+		synchronized (contributionLock) {
+			AggroInfo aggroInfo = aggroList.remove(creature.getObjectId());
+			if (transferDamagesToMaster && aggroInfo != null)
+				transferDamagesToMaster(aggroInfo);
+		}
 	}
 
 	private void transferDamagesToMaster(AggroInfo aggroInfo) {
-		Creature master = aggroInfo.getAttacker().getMaster();
-		if (master.equals(aggroInfo.getAttacker()) || !isAware(master))
+		CombatContributionOwnerResolver resolver = CombatContributionOwnerResolver.getInstance();
+		boolean personalCompanion = resolver.isPersonalCompanion(aggroInfo.getAttacker());
+		Creature master = resolver.resolve(aggroInfo.getAttacker(), owner, Context.TRANSFER_ON_REMOVE);
+		if (master.equals(aggroInfo.getAttacker()))
 			return;
+		if (!isAware(master)) {
+			if (personalCompanion)
+				log.info(
+					"AI_COMPANION_COMBAT action=CONTRIBUTION_TRANSFER result=SKIPPED reason=owner-not-aware ownerObjectId={} companionObjectId={} targetObjectId={} damage={} persistence=false",
+					master.getObjectId(), aggroInfo.getAttacker().getObjectId(), owner.getObjectId(), aggroInfo.getDamage());
+			return;
+		}
 		aggroList.compute(master.getObjectId(), (_, masterAggroInfo) -> {
 			if (masterAggroInfo == null) {
 				masterAggroInfo = new AggroInfo(master);
@@ -124,6 +143,10 @@ public class AggroList {
 			masterAggroInfo.addDamage(aggroInfo.getDamage());
 			return masterAggroInfo;
 		});
+		if (personalCompanion)
+			log.info(
+				"AI_COMPANION_COMBAT action=CONTRIBUTION_TRANSFER result=TRANSFERRED ownerObjectId={} companionObjectId={} targetObjectId={} damage={} persistence=false",
+				master.getObjectId(), aggroInfo.getAttacker().getObjectId(), owner.getObjectId(), aggroInfo.getDamage());
 	}
 
 	public void clear() {
@@ -133,7 +156,9 @@ public class AggroList {
 				hateReductionTask = null;
 			}
 		}
-		aggroList.clear();
+		synchronized (contributionLock) {
+			aggroList.clear();
+		}
 	}
 
 	public boolean isHating(Creature creature) {
@@ -192,7 +217,9 @@ public class AggroList {
 	 * @return list of DamageInfo with npc and player damages
 	 */
 	public DamageList getFinalDamageList() {
-		return new DamageList(aggroList.values(), owner);
+		synchronized (contributionLock) {
+			return new DamageList(List.copyOf(aggroList.values()), owner);
+		}
 	}
 
 	protected boolean isAware(Creature creature) {

@@ -24,6 +24,21 @@ public class AIConfig {
 	@Property(key = "ai.companions.quest_goals.allowed_quest_ids", defaultValue = "")
 	public static String COMPANION_QUEST_GOAL_ALLOWED_IDS;
 
+	@Property(key = "ai.companions.combat.enabled", defaultValue = "false")
+	public static boolean COMPANION_COMBAT_ENABLED;
+
+	@Property(key = "ai.companions.combat.basic_attack.enabled", defaultValue = "false")
+	public static boolean COMPANION_BASIC_ATTACK_ENABLED;
+
+	@Property(key = "ai.companions.combat.owner_attribution.enabled", defaultValue = "false")
+	public static boolean COMPANION_OWNER_ATTRIBUTION_ENABLED;
+
+	@Property(key = "ai.companions.combat.allowed_npc_ids", defaultValue = "")
+	public static String COMPANION_COMBAT_ALLOWED_NPC_IDS;
+
+	@Property(key = "ai.companions.combat.owner_signal_ttl_ms", defaultValue = "3000")
+	public static long COMPANION_COMBAT_OWNER_SIGNAL_TTL_MS;
+
 	@Property(key = "ai.companions.template_account_id", defaultValue = "0")
 	public static int COMPANION_TEMPLATE_ACCOUNT_ID;
 
