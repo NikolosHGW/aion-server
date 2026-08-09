@@ -41,12 +41,13 @@ public final class DefaultCombatActionGateway implements CombatActionGateway {
 	private final LongSupplier currentTimeMillis;
 	private final long eventTtlMs;
 	private final String allowedNpcIds;
+	private final QuestCombatAuthorizationPolicy questAuthorizationPolicy;
 	private final AtomicLong highestAttemptedEvent = new AtomicLong();
 	private volatile long nextAttackAllowedAt;
 
 	public DefaultCombatActionGateway(Player owner, Player companion, long sessionId,
 			CombatContributionOwnerResolver contributionResolver, BooleanSupplier featureEnabled, BooleanSupplier assistEnabled,
-			LongSupplier currentTimeMillis, long eventTtlMs, String allowedNpcIds) {
+			LongSupplier currentTimeMillis, long eventTtlMs, String allowedNpcIds, QuestCombatAuthorizationPolicy questAuthorizationPolicy) {
 		this.owner = owner;
 		this.companion = companion;
 		this.sessionId = sessionId;
@@ -56,6 +57,7 @@ public final class DefaultCombatActionGateway implements CombatActionGateway {
 		this.currentTimeMillis = currentTimeMillis;
 		this.eventTtlMs = eventTtlMs;
 		this.allowedNpcIds = allowedNpcIds;
+		this.questAuthorizationPolicy = questAuthorizationPolicy;
 	}
 
 	@Override
@@ -65,7 +67,8 @@ public final class DefaultCombatActionGateway implements CombatActionGateway {
 		if (!markAttempted(signal.eventId()))
 			return logResult(CombatResult.of(CombatStatus.DUPLICATE_EVENT, "event-already-attempted", signal));
 
-		EnumSet<CombatPreflightViolation> violations = inspect(signal);
+		TargetAuthorization authorization = authorizeTarget(signal);
+		EnumSet<CombatPreflightViolation> violations = inspect(signal, authorization);
 		CombatStatus status = CombatPreflightPolicy.evaluate(violations);
 		if (status != CombatStatus.HIT_STARTED)
 			return logResult(CombatResult.of(status, violations.iterator().next().name().toLowerCase(), signal));
@@ -75,6 +78,12 @@ public final class DefaultCombatActionGateway implements CombatActionGateway {
 			return logResult(CombatResult.of(CombatStatus.COOLDOWN, "server-attack-cadence", signal));
 
 		Npc target = (Npc) signal.target();
+		if (authorization == TargetAuthorization.QUEST) {
+			QuestCombatAuthorizationPolicy.Decision liveDecision = questAuthorizationPolicy.recheckLiveState(signal, target);
+			questAuthorizationPolicy.log(liveDecision, signal, target);
+			if (!liveDecision.allowed())
+				return logResult(CombatResult.of(CombatStatus.TARGET_NOT_ALLOWED, liveDecision.reason().toLowerCase(), signal));
+		}
 		int attackCounterBefore = companion.getGameStats().getAttackCounter();
 		companion.getController().attackTarget(target, 0, false);
 		int attackCounterAfter = companion.getGameStats().getAttackCounter();
@@ -85,7 +94,7 @@ public final class DefaultCombatActionGateway implements CombatActionGateway {
 		return logResult(CombatResult.of(CombatStatus.HIT_STARTED, "checked-player-basic-hit", signal));
 	}
 
-	private EnumSet<CombatPreflightViolation> inspect(OwnerAttackSignal signal) {
+	private EnumSet<CombatPreflightViolation> inspect(OwnerAttackSignal signal, TargetAuthorization authorization) {
 		EnumSet<CombatPreflightViolation> violations = EnumSet.noneOf(CombatPreflightViolation.class);
 		long now = currentTimeMillis.getAsLong();
 		if (!featureEnabled.getAsBoolean())
@@ -112,17 +121,11 @@ public final class DefaultCombatActionGateway implements CombatActionGateway {
 			violations.add(CombatPreflightViolation.TARGET_NOT_NPC);
 			return violations;
 		}
-		Set<Integer> allowlist;
-		try {
-			allowlist = CombatNpcAllowlist.parse(allowedNpcIds);
-		} catch (IllegalArgumentException e) {
-			allowlist = Set.of();
-		}
-		if (target.getNpcId() != CombatNpcAllowlist.FIRST_SPIKE_NPC_ID || !allowlist.equals(Set.of(CombatNpcAllowlist.FIRST_SPIKE_NPC_ID))
-			|| signal.targetObjectId() != target.getObjectId() || signal.targetTemplateId() != target.getNpcId())
+		if (authorization == TargetAuthorization.REJECTED || signal.targetObjectId() != target.getObjectId()
+			|| signal.targetTemplateId() != target.getNpcId())
 			violations.add(CombatPreflightViolation.TARGET_NOT_ALLOWED);
 		if (target.getClass() != Npc.class || target.getNpcObjectType() != NpcObjectType.NORMAL || target.getRating() != NpcRating.NORMAL
-			|| target.isBoss() || target.isRaidMonster() || target.getWorldId() != FIRST_SPIKE_MAP_ID || !isApprovedFirstSpikeSpawn(target))
+			|| target.isBoss() || target.isRaidMonster())
 			violations.add(CombatPreflightViolation.TARGET_UNSUPPORTED);
 		if (!target.isSpawned() || World.getInstance().findVisibleObject(target.getObjectId()) != target)
 			violations.add(CombatPreflightViolation.TARGET_UNSPAWNED);
@@ -154,6 +157,25 @@ public final class DefaultCombatActionGateway implements CombatActionGateway {
 		return violations;
 	}
 
+	private TargetAuthorization authorizeTarget(OwnerAttackSignal signal) {
+		if (!(signal.target() instanceof Npc target))
+			return TargetAuthorization.REJECTED;
+		Set<Integer> allowlist;
+		try {
+			allowlist = CombatNpcAllowlist.parse(allowedNpcIds);
+		} catch (IllegalArgumentException e) {
+			allowlist = Set.of();
+		}
+		if (target.getNpcId() == CombatNpcAllowlist.FIRST_SPIKE_NPC_ID
+			&& allowlist.equals(Set.of(CombatNpcAllowlist.FIRST_SPIKE_NPC_ID)) && target.getWorldId() == FIRST_SPIKE_MAP_ID
+			&& isApprovedFirstSpikeSpawn(target))
+			return TargetAuthorization.LEGACY;
+		QuestCombatAuthorizationPolicy.Decision decision = questAuthorizationPolicy.authorize(signal, target);
+		if (QuestCombatAuthorizationPolicy.isQuestTargetTemplate(target.getNpcId()) && !decision.allowed())
+			questAuthorizationPolicy.log(decision, signal, target);
+		return decision.allowed() ? TargetAuthorization.QUEST : TargetAuthorization.REJECTED;
+	}
+
 	private boolean isApprovedFirstSpikeSpawn(Npc target) {
 		if (target.getSpawn() == null || target.getSpawn().getWorldId() != FIRST_SPIKE_MAP_ID || target.getSpawn().isTemporarySpawn()
 			|| target.getSpawn().isEventSpawn() || target.getSpawn().getWalkerId() != null || target.getSpawn().getRandomWalkRange() != 0
@@ -180,6 +202,12 @@ public final class DefaultCombatActionGateway implements CombatActionGateway {
 				return false;
 		} while (!highestAttemptedEvent.compareAndSet(current, eventId));
 		return true;
+	}
+
+	private enum TargetAuthorization {
+		LEGACY,
+		QUEST,
+		REJECTED
 	}
 
 	private CombatResult logResult(CombatResult result) {

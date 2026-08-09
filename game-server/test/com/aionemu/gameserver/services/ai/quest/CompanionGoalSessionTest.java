@@ -139,6 +139,19 @@ class CompanionGoalSessionTest {
 		assertEquals(21, replacement.companionObjectId());
 	}
 
+	@Test
+	void nativeCompleteReturnsStructuredOutcomeAndClearsOffer() {
+		CompanionGoalSession session = new CompanionGoalSession(10, 20);
+		session.offer(plan(1102, 3));
+
+		ChoiceResult result = session.alreadyComplete(1102);
+
+		assertEquals(ChoiceStatus.ALREADY_COMPLETE, result.status());
+		assertEquals(1102, result.questId());
+		assertNull(session.offered());
+		assertNull(session.chosen());
+	}
+
 	static QuestGoalPlan plan(int questId, int killCount) {
 		return new QuestGoalPlan(questId, "Quest", "Quest", "reason", 1, 9, List.of(1101),
 			List.of(new QuestGoalStep(QuestGoalStep.Type.KILL_NPC_SET, List.of(210133), List.of("Kerub"), killCount,

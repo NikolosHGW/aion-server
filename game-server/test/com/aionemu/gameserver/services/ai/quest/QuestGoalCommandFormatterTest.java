@@ -21,5 +21,15 @@ class QuestGoalCommandFormatterTest {
 			assertDoesNotThrow(() -> QuestGoalCommandFormatter.formatChoice(ChoiceResult.ineligible(QuestGoalReason.FEATURE_DISABLED))));
 		assertEquals("Companion goal choose: SESSION_MISMATCH; reason=SESSION_MISMATCH",
 			assertDoesNotThrow(() -> QuestGoalCommandFormatter.formatChoice(ChoiceResult.sessionMismatch())));
+		assertTrue(QuestGoalCommandFormatter.formatChoice(ChoiceResult.alreadyComplete(1102)).contains("ALREADY_COMPLETE"));
+	}
+
+	@Test
+	void completedNonRepeatableQuestIsNotFormattedAsANewOffer() {
+		String message = QuestGoalCommandFormatter.formatProposal(QuestGoalProposalResult.alreadyComplete(1102));
+
+		assertTrue(message.contains("ALREADY_COMPLETE"));
+		assertTrue(message.contains("will not be offered again"));
+		assertFalse(message.contains("Step 1"));
 	}
 }

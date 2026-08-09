@@ -31,6 +31,12 @@ public final class QuestGoalCommandFormatter {
 		return out.toString();
 	}
 
+	public static String formatProposal(QuestGoalProposalResult result) {
+		if (result.status() == QuestGoalProposalResult.Status.ALREADY_COMPLETE)
+			return "Companion quest goal: ALREADY_COMPLETE; " + ChatUtil.quest(result.questId()) + " is non-repeatable and will not be offered again.";
+		return formatProposal(result.plan());
+	}
+
 	public static String formatChosen(QuestGoalPlan plan) {
 		return "Chosen quest goal " + ChatUtil.quest(plan.questId()) + " (ID " + plan.questId() + "): runtime AI goal only; quest not accepted";
 	}

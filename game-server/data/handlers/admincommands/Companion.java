@@ -4,7 +4,7 @@ import com.aionemu.gameserver.model.gameobjects.player.Player;
 import com.aionemu.gameserver.services.ai.CompanionService;
 import com.aionemu.gameserver.services.ai.ServerControlledPlayer;
 import com.aionemu.gameserver.services.ai.quest.QuestGoalCommandFormatter;
-import com.aionemu.gameserver.services.ai.quest.QuestGoalPlan;
+import com.aionemu.gameserver.services.ai.quest.QuestGoalProposalResult;
 import com.aionemu.gameserver.utils.chathandlers.AdminCommand;
 
 public class Companion extends AdminCommand {
@@ -61,8 +61,8 @@ public class Companion extends AdminCommand {
 			}
 			case "status" -> sendInfo(admin, service.getStatus());
 			case "today" -> {
-				QuestGoalPlan plan = service.proposeGoal(admin);
-				sendInfo(admin, QuestGoalCommandFormatter.formatProposal(plan));
+				QuestGoalProposalResult result = service.proposeGoal(admin);
+				sendInfo(admin, QuestGoalCommandFormatter.formatProposal(result));
 			}
 			default -> sendInfo(admin);
 		}

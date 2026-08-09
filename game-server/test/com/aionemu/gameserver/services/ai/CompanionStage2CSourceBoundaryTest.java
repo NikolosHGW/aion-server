@@ -57,7 +57,7 @@ class CompanionStage2CSourceBoundaryTest {
 	void duplicateAndRejectedPreflightReturnBeforeAttackPresentation() throws IOException {
 		String gateway = read("services/ai/combat/DefaultCombatActionGateway.java");
 		int duplicateReturn = gateway.indexOf("CombatStatus.DUPLICATE_EVENT");
-		int inspect = gateway.indexOf("EnumSet<CombatPreflightViolation> violations = inspect(signal)");
+		int inspect = gateway.indexOf("EnumSet<CombatPreflightViolation> violations = inspect(signal, authorization)");
 		int rejectedReturn = gateway.indexOf("if (status != CombatStatus.HIT_STARTED)");
 		int attack = gateway.indexOf("companion.getController().attackTarget(target, 0, false)");
 		assertTrue(duplicateReturn < inspect && inspect < rejectedReturn && rejectedReturn < attack);

@@ -49,6 +49,11 @@ public final class CompanionGoalSession {
 		return sessionMismatch();
 	}
 
+	public synchronized ChoiceResult alreadyComplete(int questId) {
+		clear();
+		return ChoiceResult.alreadyComplete(questId);
+	}
+
 	private boolean matches(int requesterObjectId, int currentCompanionObjectId) {
 		return ownerObjectId == requesterObjectId && companionObjectId == currentCompanionObjectId;
 	}
@@ -91,6 +96,7 @@ public final class CompanionGoalSession {
 		NO_OFFER,
 		STALE_OFFER,
 		INELIGIBLE,
+		ALREADY_COMPLETE,
 		SESSION_MISMATCH
 	}
 
@@ -110,6 +116,10 @@ public final class CompanionGoalSession {
 
 		public static ChoiceResult ineligible(QuestGoalReason reason) {
 			return new ChoiceResult(ChoiceStatus.INELIGIBLE, 0, null, reason);
+		}
+
+		public static ChoiceResult alreadyComplete(int questId) {
+			return new ChoiceResult(ChoiceStatus.ALREADY_COMPLETE, questId, null, QuestGoalReason.INELIGIBLE_NOT_REPEATABLE);
 		}
 
 		public static ChoiceResult sessionMismatch() {

@@ -23,18 +23,31 @@ import com.aionemu.gameserver.services.ai.combat.CombatNpcAllowlist;
 import com.aionemu.gameserver.services.ai.combat.CompanionCombatController;
 import com.aionemu.gameserver.services.ai.combat.DefaultCombatActionGateway;
 import com.aionemu.gameserver.services.ai.combat.OwnerAttackSignalSource;
+import com.aionemu.gameserver.services.ai.combat.QuestCombatAuthorizationPolicy;
+import com.aionemu.gameserver.services.ai.quest.CompanionQuestExecutionRuntime;
 import com.aionemu.gameserver.services.ai.quest.CompanionGoalSession;
 import com.aionemu.gameserver.services.ai.quest.CompanionGoalSession.ChoiceResult;
 import com.aionemu.gameserver.services.ai.quest.CompanionGoalSession.ChoiceStatus;
 import com.aionemu.gameserver.services.ai.quest.QuestGoalCandidateProvider;
 import com.aionemu.gameserver.services.ai.quest.QuestGoalPlan;
+import com.aionemu.gameserver.services.ai.quest.QuestGoalProposalResult;
 import com.aionemu.gameserver.services.ai.quest.QuestGoalPlanner;
 import com.aionemu.gameserver.services.ai.quest.QuestGoalPlanner.CandidateAssessment;
 import com.aionemu.gameserver.services.ai.quest.QuestGoalReason;
+import com.aionemu.gameserver.services.ai.quest.QuestExecutionAllowlist;
+import com.aionemu.gameserver.services.ai.quest.QuestExecutionCommandFormatter;
+import com.aionemu.gameserver.services.ai.quest.QuestExecutionPlan;
+import com.aionemu.gameserver.services.ai.quest.QuestExecutionPlanProvider;
+import com.aionemu.gameserver.services.ai.quest.QuestExecutionRole;
+import com.aionemu.gameserver.services.ai.quest.QuestExecutionRuntimeContext;
+import com.aionemu.gameserver.services.ai.quest.QuestExecutionState;
+import com.aionemu.gameserver.services.ai.quest.QuestExecutionTransition;
+import com.aionemu.gameserver.services.ai.quest.QuestNativeSnapshot;
 import com.aionemu.gameserver.services.ai.quest.ReadOnlyQuestEligibility;
 import com.aionemu.gameserver.services.player.PlayerService;
 import com.aionemu.gameserver.taskmanager.tasks.PlayerMoveTaskManager;
 import com.aionemu.gameserver.utils.PositionUtil;
+import com.aionemu.gameserver.utils.PacketSendUtility;
 import com.aionemu.gameserver.world.World;
 import com.aionemu.gameserver.world.WorldPosition;
 import com.aionemu.gameserver.world.geo.GeoService;
@@ -48,6 +61,7 @@ public final class CompanionService {
 	private final SyntheticPlayerScheduler scheduler = runtime.getScheduler();
 	private final QuestGoalPlanner goalPlanner = new QuestGoalPlanner();
 	private final QuestGoalCandidateProvider goalCandidateProvider = new QuestGoalCandidateProvider();
+	private final QuestExecutionPlanProvider executionPlanProvider = new QuestExecutionPlanProvider();
 	private final ReadOnlyQuestEligibility goalEligibility = new ReadOnlyQuestEligibility();
 	private final CombatContributionOwnerResolver contributionResolver = CombatContributionOwnerResolver.getInstance();
 	private final AtomicLong combatSessionIds = new AtomicLong();
@@ -97,21 +111,27 @@ public final class CompanionService {
 			companion.getCommonData().setName(runtimeName);
 
 			long combatSessionId = combatSessionIds.incrementAndGet();
+			CompanionQuestExecutionRuntime executionRuntime = new CompanionQuestExecutionRuntime(owner.getObjectId(), companion.getObjectId(),
+				combatSessionId);
 			OwnerAttackSignalSource combatSignalSource = new OwnerAttackSignalSource(owner, companion, combatSessionId, System::currentTimeMillis);
+			QuestCombatAuthorizationPolicy questAuthorizationPolicy = new QuestCombatAuthorizationPolicy(owner, companion, combatSessionId,
+				executionRuntime, this::isQuestCombatFeatureEnabled, combatSignalSource::isEnabled,
+				() -> AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS);
 			CombatActionGateway combatGateway = new DefaultCombatActionGateway(owner, companion, combatSessionId, contributionResolver,
 				this::isCombatFeatureEnabled, combatSignalSource::isEnabled, System::currentTimeMillis, AIConfig.COMPANION_COMBAT_OWNER_SIGNAL_TTL_MS,
-				AIConfig.COMPANION_COMBAT_ALLOWED_NPC_IDS);
+				AIConfig.COMPANION_COMBAT_ALLOWED_NPC_IDS, questAuthorizationPolicy);
 			CompanionCombatController combatController = new CompanionCombatController(owner.getObjectId(), companion.getObjectId(), combatSessionId,
 				combatSignalSource, combatGateway, this::isCombatFeatureEnabled, System::currentTimeMillis, AIConfig.COMPANION_COMBAT_OWNER_SIGNAL_TTL_MS);
 			CompanionController controller = new CompanionController(new PlayerCompanionContext(owner, companion),
 				new DefaultPlayerActionGateway(companion, owner), settings, this::dismissFromRuntime, System::currentTimeMillis, () -> {
 					maintainGoalSession();
+					executionRuntime.pollIfDue();
 					combatController.tick();
 				});
 			controlledPlayer = new ServerControlledPlayer(companion, templateDatabaseName, runtimeName, SyntheticPlayerRole.COMPANION, controller,
 				() -> AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED, this::dismissFromRuntime);
 			CompanionSession newSession = new CompanionSession(owner, controlledPlayer, controller,
-				new CompanionGoalSession(owner.getObjectId(), companion.getObjectId()), combatSessionId, combatController);
+				new CompanionGoalSession(owner.getObjectId(), companion.getObjectId()), executionRuntime, combatSessionId, combatController);
 			ServerControlledPlayer finalControlledPlayer = controlledPlayer;
 
 			SpawnTransaction.execute(new SpawnTransaction.Steps() {
@@ -193,23 +213,54 @@ public final class CompanionService {
 		return requireOwner(requester).combatController().status();
 	}
 
-	public synchronized QuestGoalPlan proposeGoal(Player requester) {
+	public synchronized QuestGoalProposalResult proposeGoal(Player requester) {
 		requireGoalFeatureEnabled();
 		CompanionSession current = requireOwner(requester);
+		if (AIConfig.COMPANION_QUEST_EXECUTION_ENABLED) {
+			requireExecutionConfiguration();
+			var nativeState = requester.getQuestStateList().getQuestState(QuestExecutionAllowlist.FIRST_EXECUTION_QUEST_ID);
+			if (nativeState != null && nativeState.getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.COMPLETE) {
+				current.executionRuntime().clear("already-complete");
+				current.goalSession().clear();
+				log.info(
+					"AI_COMPANION_QUEST_EXECUTION action=PROPOSE result=ALREADY_COMPLETE reason=NATIVE_QUEST_COMPLETE ownerObjectId={} companionObjectId={} companionSessionId={} questId=1102 previousState=NO_GOAL newState=COMPLETED nativeQuestStatus=COMPLETE progress=0 required=3 persistence=false",
+					requester.getObjectId(), current.controlledPlayer().getObjectId(), current.combatSessionId());
+				return QuestGoalProposalResult.alreadyComplete(QuestExecutionAllowlist.FIRST_EXECUTION_QUEST_ID);
+			}
+			if (nativeState != null && (nativeState.getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.START
+				|| nativeState.getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.REWARD)) {
+				QuestGoalCandidateProvider.CandidateResult existing = goalCandidateProvider.provide(requester,
+					QuestExecutionAllowlist.FIRST_EXECUTION_QUEST_ID);
+				if (!existing.success())
+					throw new IllegalStateException(existing.reason().name());
+				executionPlanProvider.build(existing.plan());
+				if (current.executionRuntime().clear("new-reattach-offer"))
+					logExecutionDetach(current, "new-reattach-offer");
+				current.goalSession().offer(existing.plan());
+				log.info("AI_COMPANION_GOAL action=OFFERED_REATTACH ownerObjectId={} companionObjectId={} questId={} persistence=false",
+					requester.getObjectId(), current.controlledPlayer().getObjectId(), existing.plan().questId());
+				return QuestGoalProposalResult.offered(existing.plan());
+			}
+		}
 		QuestGoalPlanner.ProposalResult proposal = buildGoalProposal(requester);
 		if (!proposal.success())
 			throw new IllegalStateException(proposal.reason() + "; rejections=" + proposal.rejections());
+		if (current.executionRuntime().clear("new-offer"))
+			logExecutionDetach(current, "new-offer");
 		current.goalSession().offer(proposal.plan());
 		log.info("AI_COMPANION_GOAL action=OFFERED ownerObjectId={} companionObjectId={} questId={} persistence=false",
 			requester.getObjectId(), current.controlledPlayer().getObjectId(), proposal.plan().questId());
-		return proposal.plan();
+		return QuestGoalProposalResult.offered(proposal.plan());
 	}
 
 	public synchronized ChoiceResult chooseGoal(Player requester) {
 		CompanionSession current = session;
 		if (!AIConfig.ENABLED || !AIConfig.COMPANIONS_ENABLED || !AIConfig.COMPANION_QUEST_GOALS_ENABLED) {
-			if (current != null)
+			if (current != null) {
 				current.goalSession().clear();
+				if (current.executionRuntime().clear("goal-feature-disabled"))
+					logExecutionDetach(current, "goal-feature-disabled");
+			}
 			return logChoice(requester, current, ChoiceResult.ineligible(QuestGoalReason.FEATURE_DISABLED));
 		}
 		if (current == null)
@@ -242,13 +293,37 @@ public final class CompanionService {
 		if (!candidate.success())
 			return logChoice(requester, current,
 				current.goalSession().revalidationFailed(requester.getObjectId(), controlled.getObjectId(), candidate.reason()));
-		ReadOnlyQuestEligibility.EligibilityResult eligibility = goalEligibility.check(requester, offered.questId());
-		if (!eligibility.eligible())
-			return logChoice(requester, current,
-				current.goalSession().revalidationFailed(requester.getObjectId(), controlled.getObjectId(), eligibility.reason()));
+		boolean attachExecution = AIConfig.COMPANION_QUEST_EXECUTION_ENABLED;
+		var nativeState = requester.getQuestStateList().getQuestState(offered.questId());
+		if (attachExecution) {
+			try {
+				requireExecutionConfiguration();
+			} catch (IllegalStateException e) {
+				return logChoice(requester, current,
+					current.goalSession().revalidationFailed(requester.getObjectId(), controlled.getObjectId(), QuestGoalReason.INVALID_ALLOWLIST));
+			}
+			if (offered.questId() != QuestExecutionAllowlist.FIRST_EXECUTION_QUEST_ID)
+				return logChoice(requester, current,
+					current.goalSession().revalidationFailed(requester.getObjectId(), controlled.getObjectId(), QuestGoalReason.INVALID_ALLOWLIST));
+			if (nativeState != null && nativeState.getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.COMPLETE) {
+				current.executionRuntime().clear("already-complete");
+				return logChoice(requester, current, current.goalSession().alreadyComplete(offered.questId()));
+			}
+		}
+		boolean reattach = attachExecution && nativeState != null
+			&& (nativeState.getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.START
+				|| nativeState.getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.REWARD);
+		if (!reattach) {
+			ReadOnlyQuestEligibility.EligibilityResult eligibility = goalEligibility.check(requester, offered.questId());
+			if (!eligibility.eligible())
+				return logChoice(requester, current,
+					current.goalSession().revalidationFailed(requester.getObjectId(), controlled.getObjectId(), eligibility.reason()));
+		}
 
-		return logChoice(requester, current,
-			current.goalSession().choose(requester.getObjectId(), controlled.getObjectId(), candidate.plan()));
+		ChoiceResult result = current.goalSession().choose(requester.getObjectId(), controlled.getObjectId(), candidate.plan());
+		if (result.status() == ChoiceStatus.CHOSEN && attachExecution)
+			attachExecution(current, result.plan());
+		return logChoice(requester, current, result);
 	}
 
 	private ChoiceResult logChoice(Player requester, CompanionSession current, ChoiceResult result) {
@@ -266,7 +341,11 @@ public final class CompanionService {
 
 	public synchronized boolean clearGoal(Player requester) {
 		CompanionSession current = requireOwner(requester);
-		boolean changed = current.goalSession().clear();
+		boolean goalChanged = current.goalSession().clear();
+		boolean executionChanged = current.executionRuntime().clear("admin-command");
+		if (executionChanged)
+			logExecutionDetach(current, "admin-command");
+		boolean changed = goalChanged || executionChanged;
 		log.info("AI_COMPANION_GOAL action=CLEARED ownerObjectId={} companionObjectId={} changed={} reason=admin-command persistence=false",
 			requester.getObjectId(), current.controlledPlayer().getObjectId(), changed);
 		return changed;
@@ -274,7 +353,14 @@ public final class CompanionService {
 
 	public synchronized String getGoalStatus(Player requester) {
 		CompanionSession current = requireOwner(requester);
-		return "questGoalFeatureEnabled=" + AIConfig.COMPANION_QUEST_GOALS_ENABLED + ", " + current.goalSession().status();
+		Player companion = current.controlledPlayer().getPlayer();
+		QuestExecutionState absentState = current.goalSession().offered() != null && current.goalSession().chosen() == null
+			? QuestExecutionState.OFFERED : QuestExecutionState.NO_GOAL;
+		return "questGoalFeatureEnabled=" + AIConfig.COMPANION_QUEST_GOALS_ENABLED
+			+ ", questExecutionFeatureEnabled=" + isQuestExecutionFeatureEnabled()
+			+ ", questCombatFeatureEnabled=" + isQuestCombatFeatureEnabled() + ", " + current.goalSession().status() + ", "
+			+ current.executionRuntime().status(System.currentTimeMillis(), requester.getWorldId(), requester.getInstanceId(), companion.getWorldId(),
+				companion.getInstanceId(), absentState);
 	}
 
 	public synchronized boolean dismiss(Player requester, String reason) {
@@ -326,6 +412,8 @@ public final class CompanionService {
 		Player owner = current.owner();
 		ServerControlledPlayer controlled = current.controlledPlayer();
 		Player companion = controlled.getPlayer();
+		QuestExecutionState absentState = current.goalSession().offered() != null && current.goalSession().chosen() == null
+			? QuestExecutionState.OFFERED : QuestExecutionState.NO_GOAL;
 		boolean worldPresent = World.getInstance().findVisibleObject(companion.getObjectId()) == companion;
 		boolean playerContainerPresent = World.getInstance().getPlayer(companion.getObjectId()) == companion
 			&& World.getInstance().getPlayer(controlled.getRuntimeName()) == companion;
@@ -359,20 +447,104 @@ public final class CompanionService {
 			+ ", " + current.combatController().status()
 			+ ", questGoalFeatureEnabled=" + AIConfig.COMPANION_QUEST_GOALS_ENABLED
 			+ ", " + current.goalSession().status()
+			+ ", questExecutionFeatureEnabled=" + isQuestExecutionFeatureEnabled()
+			+ ", questCombatFeatureEnabled=" + isQuestCombatFeatureEnabled()
+			+ ", " + current.executionRuntime().status(System.currentTimeMillis(), owner.getWorldId(), owner.getInstanceId(), companion.getWorldId(),
+				companion.getInstanceId(), absentState)
 			+ ", lastRemovalReason=" + lastRemovalReason;
 	}
 
 	private synchronized void maintainGoalSession() {
 		CompanionSession current = session;
-		if (current != null && (!AIConfig.ENABLED || !AIConfig.COMPANIONS_ENABLED || !AIConfig.COMPANION_QUEST_GOALS_ENABLED)
-			&& current.goalSession().clear())
-			log.info("AI_COMPANION_GOAL action=CLEARED ownerObjectId={} companionObjectId={} changed=true reason=feature-disabled persistence=false",
-				current.owner().getObjectId(), current.controlledPlayer().getObjectId());
+		if (current == null)
+			return;
+		if (!AIConfig.ENABLED || !AIConfig.COMPANIONS_ENABLED || !AIConfig.COMPANION_QUEST_GOALS_ENABLED) {
+			boolean goalChanged = current.goalSession().clear();
+			boolean executionChanged = current.executionRuntime().clear("goal-feature-disabled");
+			if (goalChanged || executionChanged)
+				log.info("AI_COMPANION_GOAL action=CLEARED ownerObjectId={} companionObjectId={} changed=true reason=feature-disabled persistence=false",
+					current.owner().getObjectId(), current.controlledPlayer().getObjectId());
+		} else if (!isQuestExecutionFeatureEnabled() && current.executionRuntime().clear("quest-execution-disabled")) {
+			logExecutionDetach(current, "quest-execution-disabled");
+		}
 	}
 
 	private boolean isCombatFeatureEnabled() {
 		return AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED && AIConfig.COMPANION_COMBAT_ENABLED && AIConfig.COMPANION_BASIC_ATTACK_ENABLED
 			&& AIConfig.COMPANION_OWNER_ATTRIBUTION_ENABLED;
+	}
+
+	private boolean isQuestExecutionFeatureEnabled() {
+		return AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED && AIConfig.COMPANION_QUEST_GOALS_ENABLED
+			&& AIConfig.COMPANION_QUEST_EXECUTION_ENABLED
+			&& QuestExecutionAllowlist.isExactFirstExecutionQuest(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS)
+			&& isExactExecutionGoalAllowlist() && isValidExecutionPollInterval();
+	}
+
+	private boolean isQuestCombatFeatureEnabled() {
+		return isCombatFeatureEnabled() && isQuestExecutionFeatureEnabled() && AIConfig.COMPANION_QUEST_EXECUTION_COMBAT_ENABLED;
+	}
+
+	private void requireExecutionConfiguration() {
+		if (!QuestExecutionAllowlist.isExactFirstExecutionQuest(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS))
+			throw new IllegalStateException("Quest execution allowlist must contain exact quest 1102");
+		if (!isExactExecutionGoalAllowlist())
+			throw new IllegalStateException("Quest goal allowlist must contain exact quest 1102 while execution is enabled");
+		com.aionemu.gameserver.services.ai.quest.CompanionQuestExecutionTracker.requireValidPollInterval(
+			AIConfig.COMPANION_QUEST_EXECUTION_POLL_INTERVAL_MS);
+	}
+
+	private boolean isExactExecutionGoalAllowlist() {
+		try {
+			return QuestGoalCandidateProvider.parseAllowedQuestIds(AIConfig.COMPANION_QUEST_GOAL_ALLOWED_IDS)
+				.equals(List.of(QuestExecutionAllowlist.FIRST_EXECUTION_QUEST_ID));
+		} catch (IllegalArgumentException e) {
+			return false;
+		}
+	}
+
+	private boolean isValidExecutionPollInterval() {
+		try {
+			com.aionemu.gameserver.services.ai.quest.CompanionQuestExecutionTracker.requireValidPollInterval(
+				AIConfig.COMPANION_QUEST_EXECUTION_POLL_INTERVAL_MS);
+			return true;
+		} catch (IllegalArgumentException e) {
+			return false;
+		}
+	}
+
+	private void attachExecution(CompanionSession current, QuestGoalPlan chosen) {
+		requireExecutionConfiguration();
+		QuestExecutionPlan executionPlan = executionPlanProvider.build(chosen);
+		Player owner = current.owner();
+		Player companion = current.controlledPlayer().getPlayer();
+		current.executionRuntime().attach(executionPlan,
+			() -> QuestNativeSnapshot.readOnly(owner.getQuestStateList().getQuestState(executionPlan.questId())),
+			() -> new QuestExecutionRuntimeContext(owner.getObjectId(), companion.getObjectId(), current.combatSessionId(),
+				QuestExecutionRole.PERSONAL_COMPANION, owner.getWorldId(), owner.getInstanceId(), companion.getWorldId(), companion.getInstanceId(),
+				owner.getClientConnection() != null, owner.isSpawned(), companion.isSpawned()),
+			transition -> notifyExecutionTransition(current, transition), System::currentTimeMillis,
+			AIConfig.COMPANION_QUEST_EXECUTION_POLL_INTERVAL_MS);
+		log.info(
+			"AI_COMPANION_QUEST_EXECUTION action=ATTACH result=TRACKING reason=GOAL_CHOSEN ownerObjectId={} companionObjectId={} companionSessionId={} questId={} previousState=NO_GOAL newState=TRACKING nativeQuestStatus=read-only progress=read-only required={} persistence=false",
+			owner.getObjectId(), companion.getObjectId(), current.combatSessionId(), executionPlan.questId(),
+			executionPlan.manifest().requiredProgress());
+	}
+
+	private void notifyExecutionTransition(CompanionSession current, QuestExecutionTransition transition) {
+		var snapshot = transition.snapshot();
+		log.info(
+			"AI_COMPANION_QUEST_EXECUTION action=TRACK result=STATE_CHANGED reason={} ownerObjectId={} companionObjectId={} companionSessionId={} questId=1102 previousState={} newState={} nativeQuestStatus={} progress={} required={} persistence=false",
+			snapshot.reason(), current.owner().getObjectId(), current.controlledPlayer().getObjectId(), current.combatSessionId(),
+			transition.previousState(), transition.newState(), snapshot.nativeQuestStatus() == null ? "ABSENT" : snapshot.nativeQuestStatus(),
+			snapshot.currentProgress(), snapshot.requiredProgress());
+		PacketSendUtility.sendMessage(current.owner(), QuestExecutionCommandFormatter.formatTransition(transition));
+	}
+
+	private void logExecutionDetach(CompanionSession current, String reason) {
+		log.info(
+			"AI_COMPANION_QUEST_EXECUTION action=DETACH result=CLEARED reason={} ownerObjectId={} companionObjectId={} companionSessionId={} questId=1102 previousState=runtime newState=NO_GOAL nativeQuestStatus=unchanged progress=unchanged required=3 persistence=false",
+			reason, current.owner().getObjectId(), current.controlledPlayer().getObjectId(), current.combatSessionId());
 	}
 
 	private void requireCombatFeatureEnabled() {
@@ -490,6 +662,8 @@ public final class CompanionService {
 		current.combatController().beginRemoval(reason);
 		current.controller().beginRemoval();
 		current.goalSession().clear();
+		if (current.executionRuntime().clear(reason))
+			logExecutionDetach(current, reason);
 		List<RuntimeException> failures = new ArrayList<>();
 		attemptCleanup("scheduler", () -> scheduler.unregister(controlled), failures);
 		attemptCleanup("movement", controlled::stopMovement, failures);
@@ -550,6 +724,8 @@ public final class CompanionService {
 			retainedBy.add("ownerAttackObserver");
 		if (contributionResolver.isPersonalCompanion(companion))
 			retainedBy.add("combatAttribution");
+		if (current.executionRuntime().isPresent())
+			retainedBy.add("questExecutionRuntime");
 		if (!retainedBy.isEmpty())
 			throw new IllegalStateException("Companion cleanup incomplete; retained by " + retainedBy);
 	}
@@ -610,7 +786,8 @@ public final class CompanionService {
 	}
 
 	private record CompanionSession(Player owner, ServerControlledPlayer controlledPlayer, CompanionController controller,
-		CompanionGoalSession goalSession, long combatSessionId, CompanionCombatController combatController) {
+		CompanionGoalSession goalSession, CompanionQuestExecutionRuntime executionRuntime, long combatSessionId,
+		CompanionCombatController combatController) {
 	}
 
 	private static final class SingletonHolder {

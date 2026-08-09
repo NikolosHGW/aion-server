@@ -24,6 +24,18 @@ public class AIConfig {
 	@Property(key = "ai.companions.quest_goals.allowed_quest_ids", defaultValue = "")
 	public static String COMPANION_QUEST_GOAL_ALLOWED_IDS;
 
+	@Property(key = "ai.companions.quest_execution.enabled", defaultValue = "false")
+	public static boolean COMPANION_QUEST_EXECUTION_ENABLED;
+
+	@Property(key = "ai.companions.quest_execution.combat_enabled", defaultValue = "false")
+	public static boolean COMPANION_QUEST_EXECUTION_COMBAT_ENABLED;
+
+	@Property(key = "ai.companions.quest_execution.allowed_quest_ids", defaultValue = "")
+	public static String COMPANION_QUEST_EXECUTION_ALLOWED_IDS;
+
+	@Property(key = "ai.companions.quest_execution.poll_interval_ms", defaultValue = "1000")
+	public static long COMPANION_QUEST_EXECUTION_POLL_INTERVAL_MS;
+
 	@Property(key = "ai.companions.combat.enabled", defaultValue = "false")
 	public static boolean COMPANION_COMBAT_ENABLED;
 
