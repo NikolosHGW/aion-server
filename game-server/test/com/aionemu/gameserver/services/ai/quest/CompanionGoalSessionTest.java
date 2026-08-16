@@ -140,6 +140,18 @@ class CompanionGoalSessionTest {
 	}
 
 	@Test
+	void persistedChosenPlanCanBeRestoredWithoutCreatingAnOffer() {
+		CompanionGoalSession session = new CompanionGoalSession(10, 20);
+		QuestGoalPlan restored = plan(1102, 3);
+
+		session.restoreChosen(restored);
+
+		assertNull(session.offered());
+		assertSame(restored, session.chosen());
+		assertTrue(session.status().contains("chosenQuestId=1102"));
+	}
+
+	@Test
 	void nativeCompleteReturnsStructuredOutcomeAndClearsOffer() {
 		CompanionGoalSession session = new CompanionGoalSession(10, 20);
 		session.offer(plan(1102, 3));

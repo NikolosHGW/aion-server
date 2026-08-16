@@ -24,6 +24,9 @@ public class AIConfig {
 	@Property(key = "ai.companions.quest_goals.allowed_quest_ids", defaultValue = "")
 	public static String COMPANION_QUEST_GOAL_ALLOWED_IDS;
 
+	@Property(key = "ai.companions.goal_persistence.enabled", defaultValue = "false")
+	public static boolean COMPANION_GOAL_PERSISTENCE_ENABLED;
+
 	@Property(key = "ai.companions.quest_execution.enabled", defaultValue = "false")
 	public static boolean COMPANION_QUEST_EXECUTION_ENABLED;
 

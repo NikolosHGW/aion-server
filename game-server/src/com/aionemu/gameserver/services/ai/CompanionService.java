@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 
 import com.aionemu.gameserver.configs.main.AIConfig;
 import com.aionemu.gameserver.configs.main.GeoDataConfig;
+import com.aionemu.gameserver.dao.CompanionPersistenceDAO;
 import com.aionemu.gameserver.geoEngine.collision.IgnoreProperties;
 import com.aionemu.gameserver.geoEngine.math.Vector3f;
 import com.aionemu.gameserver.model.TaskId;
@@ -24,6 +25,14 @@ import com.aionemu.gameserver.services.ai.combat.CompanionCombatController;
 import com.aionemu.gameserver.services.ai.combat.DefaultCombatActionGateway;
 import com.aionemu.gameserver.services.ai.combat.OwnerAttackSignalSource;
 import com.aionemu.gameserver.services.ai.combat.QuestCombatAuthorizationPolicy;
+import com.aionemu.gameserver.services.ai.persistence.CompanionBinding;
+import com.aionemu.gameserver.services.ai.persistence.CompanionGoalRestorePolicy;
+import com.aionemu.gameserver.services.ai.persistence.CompanionGoalRestorePolicy.RestoreResult;
+import com.aionemu.gameserver.services.ai.persistence.CompanionPersistenceException;
+import com.aionemu.gameserver.services.ai.persistence.CompanionPersistenceRepository;
+import com.aionemu.gameserver.services.ai.persistence.CompanionPersistenceRuntime;
+import com.aionemu.gameserver.services.ai.persistence.PersistedGoalIntent;
+import com.aionemu.gameserver.services.ai.persistence.QuestGoalSemanticFingerprint;
 import com.aionemu.gameserver.services.ai.quest.CompanionQuestExecutionRuntime;
 import com.aionemu.gameserver.services.ai.quest.CompanionGoalSession;
 import com.aionemu.gameserver.services.ai.quest.CompanionGoalSession.ChoiceResult;
@@ -63,6 +72,7 @@ public final class CompanionService {
 	private final QuestGoalCandidateProvider goalCandidateProvider = new QuestGoalCandidateProvider();
 	private final QuestExecutionPlanProvider executionPlanProvider = new QuestExecutionPlanProvider();
 	private final ReadOnlyQuestEligibility goalEligibility = new ReadOnlyQuestEligibility();
+	private final CompanionPersistenceRepository persistenceRepository = new CompanionPersistenceDAO();
 	private final CombatContributionOwnerResolver contributionResolver = CombatContributionOwnerResolver.getInstance();
 	private final AtomicLong combatSessionIds = new AtomicLong();
 	private volatile CompanionSession session;
@@ -131,7 +141,8 @@ public final class CompanionService {
 			controlledPlayer = new ServerControlledPlayer(companion, templateDatabaseName, runtimeName, SyntheticPlayerRole.COMPANION, controller,
 				() -> AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED, this::dismissFromRuntime);
 			CompanionSession newSession = new CompanionSession(owner, controlledPlayer, controller,
-				new CompanionGoalSession(owner.getObjectId(), companion.getObjectId()), executionRuntime, combatSessionId, combatController);
+				new CompanionGoalSession(owner.getObjectId(), companion.getObjectId()), executionRuntime, combatSessionId, combatController,
+				new CompanionPersistenceRuntime());
 			ServerControlledPlayer finalControlledPlayer = controlledPlayer;
 
 			SpawnTransaction.execute(new SpawnTransaction.Steps() {
@@ -176,6 +187,7 @@ public final class CompanionService {
 					verifyAbsent(newSession);
 				}
 			});
+			restorePersistedGoal(newSession);
 
 			lastRemovalReason = "";
 			log.info(
@@ -220,8 +232,10 @@ public final class CompanionService {
 			requireExecutionConfiguration();
 			var nativeState = requester.getQuestStateList().getQuestState(QuestExecutionAllowlist.FIRST_EXECUTION_QUEST_ID);
 			if (nativeState != null && nativeState.getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.COMPLETE) {
-				current.executionRuntime().clear("already-complete");
-				current.goalSession().clear();
+				if (current.goalSession().chosen() == null) {
+					current.executionRuntime().clear("already-complete");
+					current.goalSession().clear();
+				}
 				log.info(
 					"AI_COMPANION_QUEST_EXECUTION action=PROPOSE result=ALREADY_COMPLETE reason=NATIVE_QUEST_COMPLETE ownerObjectId={} companionObjectId={} companionSessionId={} questId=1102 previousState=NO_GOAL newState=COMPLETED nativeQuestStatus=COMPLETE progress=0 required=3 persistence=false",
 					requester.getObjectId(), current.controlledPlayer().getObjectId(), current.combatSessionId());
@@ -320,6 +334,11 @@ public final class CompanionService {
 					current.goalSession().revalidationFailed(requester.getObjectId(), controlled.getObjectId(), eligibility.reason()));
 		}
 
+		if (!offered.semanticFingerprint().equals(candidate.plan().semanticFingerprint()))
+			return logChoice(requester, current,
+				current.goalSession().revalidationFailed(requester.getObjectId(), controlled.getObjectId(), QuestGoalReason.SEMANTIC_FINGERPRINT_CHANGED));
+		if (!persistChosenGoal(current, candidate.plan()))
+			return logChoice(requester, current, ChoiceResult.persistenceFailed(candidate.plan().questId()));
 		ChoiceResult result = current.goalSession().choose(requester.getObjectId(), controlled.getObjectId(), candidate.plan());
 		if (result.status() == ChoiceStatus.CHOSEN && attachExecution)
 			attachExecution(current, result.plan());
@@ -329,8 +348,8 @@ public final class CompanionService {
 	private ChoiceResult logChoice(Player requester, CompanionSession current, ChoiceResult result) {
 		int companionObjectId = current == null ? 0 : current.controlledPlayer().getObjectId();
 		if (result.status() == ChoiceStatus.CHOSEN) {
-			log.info("AI_COMPANION_GOAL action=CHOSEN ownerObjectId={} companionObjectId={} questId={} reason={} questAccepted=false persistence=false",
-				requester.getObjectId(), companionObjectId, result.questId(), result.reason());
+			log.info("AI_COMPANION_GOAL action=CHOSEN ownerObjectId={} companionObjectId={} questId={} reason={} questAccepted=false persistence={}",
+				requester.getObjectId(), companionObjectId, result.questId(), result.reason(), AIConfig.COMPANION_GOAL_PERSISTENCE_ENABLED);
 		} else {
 			log.warn("AI_COMPANION_GOAL action={} ownerObjectId={} companionObjectId={} questId={} reason={} questAccepted=false persistence=false",
 				result.status() == ChoiceStatus.STALE_OFFER ? "STALE" : result.status(), requester.getObjectId(), companionObjectId,
@@ -341,13 +360,14 @@ public final class CompanionService {
 
 	public synchronized boolean clearGoal(Player requester) {
 		CompanionSession current = requireOwner(requester);
+		clearPersistedGoal(current);
 		boolean goalChanged = current.goalSession().clear();
 		boolean executionChanged = current.executionRuntime().clear("admin-command");
 		if (executionChanged)
 			logExecutionDetach(current, "admin-command");
 		boolean changed = goalChanged || executionChanged;
-		log.info("AI_COMPANION_GOAL action=CLEARED ownerObjectId={} companionObjectId={} changed={} reason=admin-command persistence=false",
-			requester.getObjectId(), current.controlledPlayer().getObjectId(), changed);
+		log.info("AI_COMPANION_GOAL action=CLEARED ownerObjectId={} companionObjectId={} changed={} reason=admin-command persistence={}",
+			requester.getObjectId(), current.controlledPlayer().getObjectId(), changed, AIConfig.COMPANION_GOAL_PERSISTENCE_ENABLED);
 		return changed;
 	}
 
@@ -359,6 +379,7 @@ public final class CompanionService {
 		return "questGoalFeatureEnabled=" + AIConfig.COMPANION_QUEST_GOALS_ENABLED
 			+ ", questExecutionFeatureEnabled=" + isQuestExecutionFeatureEnabled()
 			+ ", questCombatFeatureEnabled=" + isQuestCombatFeatureEnabled() + ", " + current.goalSession().status() + ", "
+			+ current.persistenceRuntime().status(AIConfig.COMPANION_GOAL_PERSISTENCE_ENABLED) + ", "
 			+ current.executionRuntime().status(System.currentTimeMillis(), requester.getWorldId(), requester.getInstanceId(), companion.getWorldId(),
 				companion.getInstanceId(), absentState);
 	}
@@ -447,6 +468,7 @@ public final class CompanionService {
 			+ ", " + current.combatController().status()
 			+ ", questGoalFeatureEnabled=" + AIConfig.COMPANION_QUEST_GOALS_ENABLED
 			+ ", " + current.goalSession().status()
+			+ ", " + current.persistenceRuntime().status(AIConfig.COMPANION_GOAL_PERSISTENCE_ENABLED)
 			+ ", questExecutionFeatureEnabled=" + isQuestExecutionFeatureEnabled()
 			+ ", questCombatFeatureEnabled=" + isQuestCombatFeatureEnabled()
 			+ ", " + current.executionRuntime().status(System.currentTimeMillis(), owner.getWorldId(), owner.getInstanceId(), companion.getWorldId(),
@@ -511,6 +533,130 @@ public final class CompanionService {
 		} catch (IllegalArgumentException e) {
 			return false;
 		}
+	}
+
+	private boolean persistChosenGoal(CompanionSession current, QuestGoalPlan plan) {
+		if (!AIConfig.COMPANION_GOAL_PERSISTENCE_ENABLED) {
+			current.persistenceRuntime().update(false, RestoreResult.DISABLED, 0);
+			return true;
+		}
+		Player owner = current.owner();
+		int companionObjectId = current.controlledPlayer().getObjectId();
+		CompanionBinding binding = new CompanionBinding(owner.getObjectId(), companionObjectId,
+			CompanionGoalRestorePolicy.ROLE_PERSONAL_COMPANION);
+		PersistedGoalIntent intent = new PersistedGoalIntent(owner.getObjectId(), CompanionGoalRestorePolicy.GOAL_TYPE_COMPLETE_QUEST,
+			plan.questId(), QuestGoalSemanticFingerprint.PLAN_VERSION, QuestGoalSemanticFingerprint.sha256(plan));
+		try {
+			persistenceRepository.saveChosenGoal(binding, intent);
+			current.persistenceRuntime().update(true, RestoreResult.SAVED, intent.planVersion());
+			log.info(
+				"AI_COMPANION_GOAL_PERSISTENCE action=SAVE result=SAVED ownerObjectId={} companionObjectId={} goalType={} targetId={} planVersion={} persistence=true",
+				owner.getObjectId(), companionObjectId, intent.goalType(), intent.targetId(), intent.planVersion());
+			return true;
+		} catch (CompanionPersistenceException e) {
+			current.persistenceRuntime().update(false, RestoreResult.DATABASE_ERROR, intent.planVersion());
+			log.error(
+				"AI_COMPANION_GOAL_PERSISTENCE action=SAVE result=DATABASE_ERROR ownerObjectId={} companionObjectId={} targetId={} planVersion={} persistence=true",
+				owner.getObjectId(), companionObjectId, intent.targetId(), intent.planVersion(), e);
+			return false;
+		}
+	}
+
+	private void clearPersistedGoal(CompanionSession current) {
+		if (!AIConfig.COMPANION_GOAL_PERSISTENCE_ENABLED) {
+			current.persistenceRuntime().update(false, RestoreResult.DISABLED, 0);
+			return;
+		}
+		int ownerObjectId = current.owner().getObjectId();
+		int companionObjectId = current.controlledPlayer().getObjectId();
+		try {
+			boolean deleted = persistenceRepository.deleteGoal(ownerObjectId, companionObjectId);
+			current.persistenceRuntime().update(false, RestoreResult.CLEARED, 0);
+			log.info(
+				"AI_COMPANION_GOAL_PERSISTENCE action=CLEAR result={} ownerObjectId={} companionObjectId={} persistence=true",
+				deleted ? "DELETED" : "ALREADY_CLEAR", ownerObjectId, companionObjectId);
+		} catch (CompanionPersistenceException e) {
+			current.persistenceRuntime().update(true, RestoreResult.DATABASE_ERROR, 0);
+			log.error(
+				"AI_COMPANION_GOAL_PERSISTENCE action=CLEAR result=DATABASE_ERROR ownerObjectId={} companionObjectId={} persistence=true",
+				ownerObjectId, companionObjectId, e);
+			throw new IllegalStateException("Persistent companion goal could not be cleared; runtime goal was kept", e);
+		}
+	}
+
+	private void restorePersistedGoal(CompanionSession current) {
+		if (!AIConfig.COMPANION_GOAL_PERSISTENCE_ENABLED) {
+			current.persistenceRuntime().update(false, RestoreResult.DISABLED, 0);
+			return;
+		}
+		Player owner = current.owner();
+		int companionObjectId = current.controlledPlayer().getObjectId();
+		try {
+			var persisted = persistenceRepository.load(owner.getObjectId());
+			if (persisted.isEmpty()) {
+				current.persistenceRuntime().update(false, RestoreResult.NO_PERSISTED_STATE, 0);
+				log.info(
+					"AI_COMPANION_GOAL_PERSISTENCE action=RESTORE result=NO_PERSISTED_STATE ownerObjectId={} companionObjectId={} persistence=true",
+					owner.getObjectId(), companionObjectId);
+				return;
+			}
+			var state = persisted.get();
+			if (state.goalIntent().isEmpty()) {
+				current.persistenceRuntime().update(false, RestoreResult.NO_PERSISTED_GOAL, 0);
+				return;
+			}
+			PersistedGoalIntent intent = state.goalIntent().get();
+			if (!AIConfig.COMPANION_QUEST_GOALS_ENABLED || !allowedGoalIdsContain(intent.targetId())) {
+				current.persistenceRuntime().update(true, RestoreResult.CONFIGURATION_REJECTED, intent.planVersion());
+				logPersistenceRestore(current, RestoreResult.CONFIGURATION_REJECTED, intent);
+				return;
+			}
+			QuestGoalCandidateProvider.CandidateResult candidate = goalCandidateProvider.provide(owner, intent.targetId());
+			if (!candidate.success()) {
+				current.persistenceRuntime().update(true, RestoreResult.PLAN_REBUILD_FAILED, intent.planVersion());
+				logPersistenceRestore(current, RestoreResult.PLAN_REBUILD_FAILED, intent);
+				return;
+			}
+			RestoreResult result = CompanionGoalRestorePolicy.validate(state, owner.getObjectId(), companionObjectId, candidate.plan());
+			if (result != RestoreResult.RESTORED) {
+				current.persistenceRuntime().update(true, result, intent.planVersion());
+				logPersistenceRestore(current, result, intent);
+				return;
+			}
+			current.goalSession().restoreChosen(candidate.plan());
+			if (isQuestExecutionFeatureEnabled()) {
+				requireExecutionConfiguration();
+				attachExecution(current, candidate.plan());
+			}
+			current.persistenceRuntime().update(true, RestoreResult.RESTORED, intent.planVersion());
+			logPersistenceRestore(current, RestoreResult.RESTORED, intent);
+		} catch (CompanionPersistenceException e) {
+			current.persistenceRuntime().update(false, RestoreResult.DATABASE_ERROR, 0);
+			log.error(
+				"AI_COMPANION_GOAL_PERSISTENCE action=RESTORE result=DATABASE_ERROR ownerObjectId={} companionObjectId={} persistence=true",
+				owner.getObjectId(), companionObjectId, e);
+		} catch (IllegalArgumentException | IllegalStateException e) {
+			current.goalSession().clear();
+			current.executionRuntime().clear("persistence-restore-rejected");
+			current.persistenceRuntime().update(true, RestoreResult.CONFIGURATION_REJECTED, 0);
+			log.warn(
+				"AI_COMPANION_GOAL_PERSISTENCE action=RESTORE result=CONFIGURATION_REJECTED ownerObjectId={} companionObjectId={} persistence=true",
+				owner.getObjectId(), companionObjectId, e);
+		}
+	}
+
+	private boolean allowedGoalIdsContain(int questId) {
+		try {
+			return QuestGoalCandidateProvider.parseAllowedQuestIds(AIConfig.COMPANION_QUEST_GOAL_ALLOWED_IDS).contains(questId);
+		} catch (IllegalArgumentException e) {
+			return false;
+		}
+	}
+
+	private void logPersistenceRestore(CompanionSession current, RestoreResult result, PersistedGoalIntent intent) {
+		log.info(
+			"AI_COMPANION_GOAL_PERSISTENCE action=RESTORE result={} ownerObjectId={} companionObjectId={} goalType={} targetId={} planVersion={} persistence=true",
+			result, current.owner().getObjectId(), current.controlledPlayer().getObjectId(), intent.goalType(), intent.targetId(), intent.planVersion());
 	}
 
 	private void attachExecution(CompanionSession current, QuestGoalPlan chosen) {
@@ -787,7 +933,7 @@ public final class CompanionService {
 
 	private record CompanionSession(Player owner, ServerControlledPlayer controlledPlayer, CompanionController controller,
 		CompanionGoalSession goalSession, CompanionQuestExecutionRuntime executionRuntime, long combatSessionId,
-		CompanionCombatController combatController) {
+		CompanionCombatController combatController, CompanionPersistenceRuntime persistenceRuntime) {
 	}
 
 	private static final class SingletonHolder {

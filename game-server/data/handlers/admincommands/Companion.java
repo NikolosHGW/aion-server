@@ -19,7 +19,7 @@ public class Companion extends AdminCommand {
 			"<dismiss> - Remove the companion without persistence.",
 			"<status> - Show owner, lifecycle, movement and world diagnostics.",
 			"<today> - Offer one read-only quest goal from the configured allowlist.",
-			"<goal choose|status|clear> - Manage the runtime-only quest goal offer.");
+			"<goal choose|status|clear> - Manage the persistent quest goal intent.");
 	}
 
 	@Override

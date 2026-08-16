@@ -19,6 +19,13 @@ public final class CompanionGoalSession {
 		chosen = null;
 	}
 
+	public synchronized void restoreChosen(QuestGoalPlan plan) {
+		if (plan == null)
+			throw new IllegalArgumentException("Restored goal plan must not be null");
+		offered = null;
+		chosen = plan;
+	}
+
 	public synchronized ChoiceResult choose(int requesterObjectId, int currentCompanionObjectId, QuestGoalPlan rebuilt) {
 		if (!matches(requesterObjectId, currentCompanionObjectId))
 			return sessionMismatch();
@@ -93,6 +100,7 @@ public final class CompanionGoalSession {
 
 	public enum ChoiceStatus {
 		CHOSEN,
+		PERSISTENCE_FAILED,
 		NO_OFFER,
 		STALE_OFFER,
 		INELIGIBLE,
@@ -108,6 +116,10 @@ public final class CompanionGoalSession {
 
 		public static ChoiceResult noOffer() {
 			return new ChoiceResult(ChoiceStatus.NO_OFFER, 0, null, QuestGoalReason.NO_OFFER);
+		}
+
+		public static ChoiceResult persistenceFailed(int questId) {
+			return new ChoiceResult(ChoiceStatus.PERSISTENCE_FAILED, questId, null, QuestGoalReason.PERSISTENCE_FAILED);
 		}
 
 		public static ChoiceResult stale(int questId, QuestGoalReason reason) {
