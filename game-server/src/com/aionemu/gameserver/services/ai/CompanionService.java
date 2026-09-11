@@ -25,6 +25,11 @@ import com.aionemu.gameserver.services.ai.combat.CompanionCombatController;
 import com.aionemu.gameserver.services.ai.combat.DefaultCombatActionGateway;
 import com.aionemu.gameserver.services.ai.combat.OwnerAttackSignalSource;
 import com.aionemu.gameserver.services.ai.combat.QuestCombatAuthorizationPolicy;
+import com.aionemu.gameserver.services.ai.creation.CompanionBodyRecord;
+import com.aionemu.gameserver.services.ai.creation.CompanionCreationRequest;
+import com.aionemu.gameserver.services.ai.creation.CompanionCreationResult;
+import com.aionemu.gameserver.services.ai.creation.CompanionCreationService;
+import com.aionemu.gameserver.services.ai.creation.DefaultCompanionPlayerCreationGateway;
 import com.aionemu.gameserver.services.ai.persistence.CompanionBinding;
 import com.aionemu.gameserver.services.ai.persistence.CompanionGoalRestorePolicy;
 import com.aionemu.gameserver.services.ai.persistence.CompanionGoalRestorePolicy.RestoreResult;
@@ -73,6 +78,8 @@ public final class CompanionService {
 	private final QuestExecutionPlanProvider executionPlanProvider = new QuestExecutionPlanProvider();
 	private final ReadOnlyQuestEligibility goalEligibility = new ReadOnlyQuestEligibility();
 	private final CompanionPersistenceRepository persistenceRepository = new CompanionPersistenceDAO();
+	private final CompanionCreationService creationService = new CompanionCreationService(persistenceRepository,
+		new DefaultCompanionPlayerCreationGateway());
 	private final CombatContributionOwnerResolver contributionResolver = CombatContributionOwnerResolver.getInstance();
 	private final AtomicLong combatSessionIds = new AtomicLong();
 	private volatile CompanionSession session;
@@ -85,12 +92,23 @@ public final class CompanionService {
 		return SingletonHolder.INSTANCE;
 	}
 
+	public synchronized CompanionCreationResult create(Player owner) {
+		CompanionPreflight.requireEnabled(AIConfig.ENABLED, AIConfig.COMPANIONS_ENABLED);
+		requireCreationConfiguration();
+		CompanionPreflight.validateOwner(owner.getClientConnection() != null,
+			World.getInstance().findVisibleObject(owner.getObjectId()) == owner, owner.isSpawned(), runtime.isServerControlled(owner));
+		CompanionCreationResult result = creationService.create(creationRequest(owner), AIConfig.COMPANION_CREATION_HOST_ACCOUNT_ID,
+			AIConfig.COMPANION_CREATION_HOST_ACCOUNT_NAME);
+		log.info(
+			"AI_COMPANION_CREATION action=CREATE result={} ownerObjectId={} companionObjectId={} companionDbName={} hostAccountId={} persistence=true",
+			result.status(), owner.getObjectId(), result.body().playerId(), result.body().databaseName(), result.body().accountId());
+		return result;
+	}
+
 	public synchronized ServerControlledPlayer summon(Player owner) {
 		CompanionPreflight.requireEnabled(AIConfig.ENABLED, AIConfig.COMPANIONS_ENABLED);
 		if (session != null || registry.getActive(SyntheticPlayerRole.COMPANION) != null)
 			throw new IllegalStateException("Stage 2A already has an active companion");
-		if (AIConfig.COMPANION_TEMPLATE_ACCOUNT_ID <= 0 || AIConfig.COMPANION_TEMPLATE_CHARACTER_ID <= 0)
-			throw new IllegalStateException("Companion template account and character IDs must be configured");
 		if (!GeoDataConfig.GEO_ENABLE || !GeoDataConfig.CANSEE_ENABLE)
 			throw new IllegalStateException("Stage 2A requires geodata and can-see checks");
 		CompanionPreflight.validateOwner(owner.getClientConnection() != null,
@@ -98,12 +116,29 @@ public final class CompanionService {
 		CompanionPreflight.validateSpawnSettings(AIConfig.COMPANION_SPAWN_OFFSET_DISTANCE, AIConfig.COMPANION_COLLISION_TOLERANCE);
 
 		CompanionFollowSettings settings = followSettings();
-		int objectId = AIConfig.COMPANION_TEMPLATE_CHARACTER_ID;
-		Account account = AccountService.loadAccount(AIConfig.COMPANION_TEMPLATE_ACCOUNT_ID);
+		int accountId;
+		int objectId;
+		String identityOrigin;
+		if (AIConfig.COMPANION_CREATION_ENABLED) {
+			requireCreationConfiguration();
+			CompanionBodyRecord body = creationService.resolveOwnedBody(creationRequest(owner), AIConfig.COMPANION_CREATION_HOST_ACCOUNT_ID,
+				AIConfig.COMPANION_CREATION_HOST_ACCOUNT_NAME);
+			accountId = body.accountId();
+			objectId = body.playerId();
+			identityOrigin = "PRODUCT_CREATED";
+		} else {
+			if (AIConfig.COMPANION_TEMPLATE_ACCOUNT_ID <= 0 || AIConfig.COMPANION_TEMPLATE_CHARACTER_ID <= 0)
+				throw new IllegalStateException("Companion template account and character IDs must be configured");
+			accountId = AIConfig.COMPANION_TEMPLATE_ACCOUNT_ID;
+			objectId = AIConfig.COMPANION_TEMPLATE_CHARACTER_ID;
+			identityOrigin = "LEGACY_TEMPLATE";
+		}
+		Account account = AccountService.loadAccount(accountId);
+		if (AIConfig.COMPANION_CREATION_ENABLED)
+			account.setName(AIConfig.COMPANION_CREATION_HOST_ACCOUNT_NAME);
 		PlayerAccountData templateData = account.getPlayerAccountData(objectId);
 		if (templateData == null)
-			throw new IllegalArgumentException(
-				"Character " + objectId + " does not belong to configured account " + AIConfig.COMPANION_TEMPLATE_ACCOUNT_ID);
+			throw new IllegalArgumentException("Character " + objectId + " does not belong to configured companion account " + accountId);
 
 		String templateDatabaseName = templateData.getPlayerCommonData().getName();
 		String runtimeName = AIConfig.SYNTHETIC_RUNTIME_NAME_PREFIX + templateDatabaseName;
@@ -191,8 +226,8 @@ public final class CompanionService {
 
 			lastRemovalReason = "";
 			log.info(
-				"AI_COMPANION lifecycle=ACTIVE ownerObjectId={} ownerName={} companionObjectId={} templateDbName={} runtimeName={} connectionNull={} mapId={} instanceId={} mode={}",
-				owner.getObjectId(), owner.getName(), objectId, templateDatabaseName, runtimeName, companion.getClientConnection() == null,
+				"AI_COMPANION lifecycle=ACTIVE identityOrigin={} ownerObjectId={} ownerName={} companionObjectId={} companionDbName={} runtimeName={} connectionNull={} mapId={} instanceId={} mode={}",
+				identityOrigin, owner.getObjectId(), owner.getName(), objectId, templateDatabaseName, runtimeName, companion.getClientConnection() == null,
 				companion.getWorldId(), companion.getInstanceId(), controller.getMode());
 			return controlledPlayer;
 		} catch (RuntimeException | Error e) {
@@ -476,6 +511,20 @@ public final class CompanionService {
 			+ ", lastRemovalReason=" + lastRemovalReason;
 	}
 
+	public String getStatus(Player requester) {
+		String runtimeStatus = getStatus();
+		if (!AIConfig.COMPANION_CREATION_ENABLED)
+			return runtimeStatus + ", productCreationEnabled=false";
+		requireCreationConfiguration();
+		var state = persistenceRepository.load(requester.getObjectId());
+		if (state.isEmpty())
+			return runtimeStatus + ", productCreationEnabled=true, owned=false";
+		CompanionBodyRecord body = creationService.resolveOwnedBody(creationRequest(requester), AIConfig.COMPANION_CREATION_HOST_ACCOUNT_ID,
+			AIConfig.COMPANION_CREATION_HOST_ACCOUNT_NAME);
+		return runtimeStatus + ", productCreationEnabled=true, owned=true, ownedCompanionObjectId=" + body.playerId()
+			+ ", ownedCompanionDbName=" + body.databaseName() + ", companionHostAccountId=" + body.accountId();
+	}
+
 	private synchronized void maintainGoalSession() {
 		CompanionSession current = session;
 		if (current == null)
@@ -547,7 +596,10 @@ public final class CompanionService {
 		PersistedGoalIntent intent = new PersistedGoalIntent(owner.getObjectId(), CompanionGoalRestorePolicy.GOAL_TYPE_COMPLETE_QUEST,
 			plan.questId(), QuestGoalSemanticFingerprint.PLAN_VERSION, QuestGoalSemanticFingerprint.sha256(plan));
 		try {
-			persistenceRepository.saveChosenGoal(binding, intent);
+			if (AIConfig.COMPANION_CREATION_ENABLED)
+				persistenceRepository.saveGoalForExistingBinding(binding, intent);
+			else
+				persistenceRepository.saveChosenGoal(binding, intent);
 			current.persistenceRuntime().update(true, RestoreResult.SAVED, intent.planVersion());
 			log.info(
 				"AI_COMPANION_GOAL_PERSISTENCE action=SAVE result=SAVED ownerObjectId={} companionObjectId={} goalType={} targetId={} planVersion={} persistence=true",
@@ -705,6 +757,20 @@ public final class CompanionService {
 		CompanionPreflight.requireEnabled(AIConfig.ENABLED, AIConfig.COMPANIONS_ENABLED);
 		if (!AIConfig.COMPANION_QUEST_GOALS_ENABLED)
 			throw new IllegalStateException(QuestGoalReason.FEATURE_DISABLED.name());
+	}
+
+	private void requireCreationConfiguration() {
+		if (!AIConfig.COMPANION_CREATION_ENABLED)
+			throw new IllegalStateException("Companion product creation is disabled");
+		if (!AIConfig.COMPANION_GOAL_PERSISTENCE_ENABLED)
+			throw new IllegalStateException("Companion product creation requires persistent ownership");
+		if (AIConfig.COMPANION_CREATION_HOST_ACCOUNT_ID <= 0 || AIConfig.COMPANION_CREATION_HOST_ACCOUNT_NAME == null
+			|| AIConfig.COMPANION_CREATION_HOST_ACCOUNT_NAME.isBlank())
+			throw new IllegalStateException("Companion creation host account must be configured");
+	}
+
+	private CompanionCreationRequest creationRequest(Player owner) {
+		return new CompanionCreationRequest(owner.getObjectId(), owner.getRace().name(), owner.getGender().name());
 	}
 
 	private QuestGoalPlanner.ProposalResult buildGoalProposal(Player owner) {

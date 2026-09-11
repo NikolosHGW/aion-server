@@ -27,6 +27,15 @@ public class AIConfig {
 	@Property(key = "ai.companions.goal_persistence.enabled", defaultValue = "false")
 	public static boolean COMPANION_GOAL_PERSISTENCE_ENABLED;
 
+	@Property(key = "ai.companions.creation.enabled", defaultValue = "false")
+	public static boolean COMPANION_CREATION_ENABLED;
+
+	@Property(key = "ai.companions.creation.host_account_id", defaultValue = "0")
+	public static int COMPANION_CREATION_HOST_ACCOUNT_ID;
+
+	@Property(key = "ai.companions.creation.host_account_name", defaultValue = "")
+	public static String COMPANION_CREATION_HOST_ACCOUNT_NAME;
+
 	@Property(key = "ai.companions.quest_execution.enabled", defaultValue = "false")
 	public static boolean COMPANION_QUEST_EXECUTION_ENABLED;
 

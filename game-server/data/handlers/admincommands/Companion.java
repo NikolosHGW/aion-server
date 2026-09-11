@@ -12,7 +12,8 @@ public class Companion extends AdminCommand {
 	public Companion() {
 		super("companion", "Controls the single runtime companion.");
 		setSyntaxInfo(
-			"<summon> - Spawn the configured companion template and bind it to you.",
+			"<create> - Create your persistent personal companion once; does not summon it.",
+			"<summon> - Spawn your already-created persistent companion.",
 			"<follow> - Resume following you.",
 			"<stay> - Stop and remain in the world.",
 			"<assist on|off|status> - Arm or disarm one-hit reactions to owner attack events.",
@@ -39,27 +40,33 @@ public class Companion extends AdminCommand {
 
 		CompanionService service = CompanionService.getInstance();
 		switch (params[0].toLowerCase()) {
+			case "create" -> {
+				var result = service.create(admin);
+				sendInfo(admin, "Companion create: " + result.status() + ", companionObjectId=" + result.body().playerId()
+					+ ", companionDbName=" + result.body().databaseName() + ". Use //companion summon.");
+				sendInfo(admin, service.getStatus(admin));
+			}
 			case "summon" -> {
 				ServerControlledPlayer companion = service.summon(admin);
 				sendInfo(admin, "Summoned runtime companion " + companion.getRuntimeName() + " (object ID " + companion.getObjectId() + ").");
-				sendInfo(admin, service.getStatus());
+				sendInfo(admin, service.getStatus(admin));
 			}
 			case "follow" -> {
 				service.follow(admin);
 				sendInfo(admin, "Companion mode set to FOLLOWING.");
-				sendInfo(admin, service.getStatus());
+				sendInfo(admin, service.getStatus(admin));
 			}
 			case "stay" -> {
 				service.stay(admin);
 				sendInfo(admin, "Companion mode set to STAYING.");
-				sendInfo(admin, service.getStatus());
+				sendInfo(admin, service.getStatus(admin));
 			}
 			case "dismiss" -> {
 				boolean removed = service.dismiss(admin, "admin-command:" + admin.getName());
 				sendInfo(admin, removed ? "Companion removed without persistence." : "Companion is already absent.");
-				sendInfo(admin, service.getStatus());
+				sendInfo(admin, service.getStatus(admin));
 			}
-			case "status" -> sendInfo(admin, service.getStatus());
+			case "status" -> sendInfo(admin, service.getStatus(admin));
 			case "today" -> {
 				QuestGoalProposalResult result = service.proposeGoal(admin);
 				sendInfo(admin, QuestGoalCommandFormatter.formatProposal(result));
