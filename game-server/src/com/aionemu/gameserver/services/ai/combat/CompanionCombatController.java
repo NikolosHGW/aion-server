@@ -22,6 +22,7 @@ public final class CompanionCombatController {
 	private final long eventTtlMs;
 	private long lastConsumedEventId;
 	private long lastEventAt;
+	private long followCatchUpSuppressedUntil;
 	private CombatResult lastResult = new CombatResult(CombatStatus.IDLE, "none", 0, 0, 0);
 	private boolean removing;
 
@@ -97,6 +98,7 @@ public final class CompanionCombatController {
 			logResult(lastResult);
 			return;
 		}
+		followCatchUpSuppressedUntil = Math.max(followCatchUpSuppressedUntil, now + eventTtlMs);
 		lastResult = gateway.basicHitOnce(signal);
 	}
 
@@ -113,6 +115,10 @@ public final class CompanionCombatController {
 
 	public synchronized boolean isObserverAttached() {
 		return signalSource.isObserverAttached();
+	}
+
+	public synchronized boolean isFollowCatchUpSuppressed() {
+		return currentTimeMillis.getAsLong() < followCatchUpSuppressedUntil;
 	}
 
 	public synchronized String status() {

@@ -26,6 +26,8 @@ interface CompanionContext {
 
 	byte ownerHeading();
 
+	float ownerEffectiveGroundSpeed();
+
 	boolean companionInWorld();
 
 	boolean companionSpawned();
@@ -33,6 +35,18 @@ interface CompanionContext {
 	int companionMapId();
 
 	int companionInstanceId();
+
+	float companionX();
+
+	float companionY();
+
+	float companionZ();
+
+	float companionNativeGroundSpeed();
+
+	boolean supportedGroundMovement();
+
+	boolean companionMovementAllowed();
 
 	double distanceToOwner();
 }

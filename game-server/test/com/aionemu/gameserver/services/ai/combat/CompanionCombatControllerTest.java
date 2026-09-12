@@ -45,6 +45,18 @@ class CompanionCombatControllerTest {
 	}
 
 	@Test
+	void acceptedCombatSignalSuppressesFollowCatchUpForBoundedTtl() {
+		controller.enableAssist();
+		signals.add(signal(1, 30, 1_000));
+
+		controller.tick();
+
+		assertTrue(controller.isFollowCatchUpSuppressed());
+		clock.set(4_000);
+		assertFalse(controller.isFollowCatchUpSuppressed());
+	}
+
+	@Test
 	void duplicateEventIsRejectedBeforeGateway() {
 		controller.enableAssist();
 		signals.add(signal(7, 30, 1_000));

@@ -235,6 +235,35 @@ NPC movement выполняет движение к точке и локальн
 завершиться понятной ошибкой, а не телепортировать AI или пытаться выдать
 локальную collision correction за pathfinding.
 
+#### Принятый 2G Navigation Hardening для PERSONAL_COMPANION
+
+2G не добавляет pathfinding. `CompanionController` сохраняет follow decision
+layer, а `PlayerActionGateway` возвращает structured `MovementResult`: intent,
+phase, rejection reason, attempted и resolved destination. Для близкой follow
+цели controller ограниченно пробует `REAR`, `REAR_LEFT`, `REAR_RIGHT`.
+
+При значительном separation PERSONAL_COMPANION ведёт только runtime bounded
+owner breadcrumb trail. Sampling выполняется тем же shared scheduler tick,
+начинаясь в FOLLOWING и продолжаясь между BLOCKED retries. Trail имеет limits
+по количеству, age и path length; map/instance/time/impossible XY/Z transition
+разрывают его fail-closed. Нормальный ground slope оценивается по XY, elapsed
+time и plausible owner speed, а не по одному абсолютному Z delta.
+
+Breadcrumb не даёт права на перемещение: каждый segment снова проходит
+map/instance, geodata/Z, collision, LoS и start revalidation в gateway. При
+локально плохой точке разрешён максимум трёхточечный chronological look-ahead;
+более поздняя точка принимается только после полной проверки прямого segment
+от текущей companion position. До успешного start старые точки не удаляются.
+
+Ground FOLLOWING также может передать в `PlayerMoveController` transient
+server-controlled effective speed. Это `max(native companion speed, effective
+owner ground speed)` и небольшой bounded catch-up при накопленном separation.
+Override не изменяет GameStats, effects, items, equipment или DB; connected
+players его не получают. Он очищается при stop/stay/removal/block/lifecycle
+transition, не действует для flight/glide/ride/native movement prohibition и
+временно подавляется combat signal. Presentation использует существующий
+`SM_EMOTION(CHANGE_SPEED)` путь и возвращается к native speed при очистке.
+
 ### 3.5. Бой, навыки, эффекты и cooldowns
 
 | Операция | Входящий packet | Повторно используемая логика | Связь с packet |
@@ -411,10 +440,10 @@ CompanionController
   reads -> CompanionContext            # owner/body snapshot
   uses -> PlayerActionGateway          # только разрешённые игровые действия
 
-PlayerActionGateway (этап 2A)
-  -> checkMovement                     # region + collision + LoS
-  -> startMove
-  -> stopMove
+PlayerActionGateway (2A, hardened в 2G)
+  -> checkMovement(intent)             # region + geodata + collision + LoS
+  -> startMove(intent, effectiveSpeed) # start revalidation
+  -> stopMove / clear transient speed
 
 ServerPlayerController
   <- RouteServerPlayerController       # технический маршрут этапа 1
@@ -429,8 +458,10 @@ ServerPlayerController
 В этапе 1 используется `RouteServerPlayerController`. В этапе 2A реализован
 `CompanionController`, который принимает только решения follow/stay/blocked и
 не обращается к `World`, movement controller, geodata или packet-коду напрямую.
-Его `PlayerActionGateway` содержит только `checkMovement`, `startMove` и
-`stopMove`. Combat, skills, quests, groups, inventory и economy не подключены.
+В 2G gateway boundary по-прежнему остаётся единственной movement границей;
+добавлены structured diagnostics, breadcrumb intent и transient-speed cleanup,
+не новый packet protocol или scheduler. Combat, skills, quests, groups,
+inventory и economy не подключены этим hardening.
 
 ## 6. Общий scheduler и отсутствие фоновой симуляции
 
@@ -538,7 +569,7 @@ ai.economy.enabled=false
 | `isOnline == has connection` | Items, interactions, groups, loot и часть effects считают AI offline | Не подделывать connection; перед соответствующим этапом разделить network/world presence. |
 | Обычные enter/leave services сетевые | NPE, login side effects, неправильное сохранение | Отдельный idempotent lifecycle service. |
 | `DebugService` считает AI аномалией | Warning каждые 30 минут | Явно распознавать registry-controlled players. |
-| Нет pathfinding | AI застрянет у препятствия | Этап 1 — только заранее валидированный прямой маршрут; полноценный pathfinder — отдельное решение. |
+| Нет universal pathfinding | Некоторые непреодолимые препятствия всё ещё дают BLOCKED | 2G использует только validated direct segments, bounded offsets/breadcrumbs; полноценный navmesh/pathfinder — отдельное решение. |
 | `SM_PLAYER_INFO` требует полноты модели | NPE на settings/rank/motions/account | Загружать через `PlayerService.getPlayer`, добавить preflight validation. |
 | Template character может войти настоящим клиентом | Duplicate object ID / конфликт аккаунта | Отдельный закрытый account, duplicate guard, никогда не выдавать credentials. |
 | Runtime-префикс `[AI]` не проходит обычную name validation | Несогласованность DB/display | В spike менять только runtime copy до `World.storeObject`; вручную подтвердить отображение клиентом. |

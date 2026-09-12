@@ -76,7 +76,7 @@ public abstract class PlayableMoveController<T extends Creature> extends Creatur
 		if (dist < 0.01f)
 			return;
 
-		float currentSpeed = StatFunctions.adjustStatByMovementModifier(owner, StatEnum.SPEED, owner.getGameStats().getMovementSpeedFloat());
+		float currentSpeed = getEffectiveMovementSpeed();
 		long msElapsed = System.currentTimeMillis() - lastMoveUpdate;
 		float futureXYDistPassed = Math.min(currentSpeed * msElapsed / 1000f, dist);
 		float futureZDistPassed = isJumping() ? Math.min(2 * msElapsed / 1000f, dist) : futureXYDistPassed;
@@ -93,6 +93,10 @@ public abstract class PlayableMoveController<T extends Creature> extends Creatur
 
 		World.getInstance().updatePosition(owner, newX, newY, newZ, heading, false);
 		updateLastMove();
+	}
+
+	protected float getEffectiveMovementSpeed() {
+		return StatFunctions.adjustStatByMovementModifier(owner, StatEnum.SPEED, owner.getGameStats().getMovementSpeedFloat());
 	}
 
 	@Override

@@ -16,7 +16,13 @@ class CompanionStage2ASourceBoundaryTest {
 	@Test
 	void gatewayContainsOnlyMovementOperations() {
 		Set<String> methods = List.of(PlayerActionGateway.class.getDeclaredMethods()).stream().map(method -> method.getName()).collect(Collectors.toSet());
-		assertEquals(Set.of("checkMovement", "startMove", "stopMove"), methods);
+		assertEquals(Set.of("checkMovement", "startMove", "stopMove", "clearServerControlledMovementSpeed"), methods);
+		assertEquals(PlayerActionGateway.MovementResult.class,
+			List.of(PlayerActionGateway.class.getDeclaredMethods()).stream().filter(method -> method.getName().equals("checkMovement")).findFirst().orElseThrow()
+				.getReturnType());
+		assertEquals(PlayerActionGateway.MovementResult.class,
+			List.of(PlayerActionGateway.class.getDeclaredMethods()).stream().filter(method -> method.getName().equals("startMove")).findFirst().orElseThrow()
+				.getReturnType());
 	}
 
 	@Test
@@ -69,6 +75,36 @@ class CompanionStage2ASourceBoundaryTest {
 			"distanceToOwner=", "followStartDistance=", "followStopDistance=", "lastBlockedReason=", "lastRemovalReason=")) {
 			assertTrue(source.contains(field), "Missing status field: " + field);
 		}
+		assertTrue(source.contains("getMovementDiagnostics()"));
+		String controllerSource = Files.readString(Path.of("src/com/aionemu/gameserver/services/ai/CompanionController.java"));
+		for (String field : List.of("currentMovementRejection=", "currentMovementAttemptedDestination=", "currentMovementResolvedDestination=",
+			"lastMovementRejection=", "lastMovementRejectionAttemptedDestination=", "lastMovementRejectionResolvedDestination=",
+			"lastAttemptedDestination=", "lastResolvedDestination=", "consecutiveMovementRetries=", "movementBlockedSince=",
+			"movementLastAttempt=", "movementLastRecovery=", "movementRecoveryCount=", "movementLastRecoveryCandidate=", "followStrategy=",
+			"breadcrumbAnchored=", "breadcrumbCount=", "breadcrumbNext=", "breadcrumbDiscontinuity=", "breadcrumbConsumedCount=",
+			"breadcrumbShortcutSkippedCount=", "catchUpActive=",
+			"nativeMovementSpeed=", "ownerMovementSpeed=", "effectiveFollowSpeed=", "catchUpSuppression="))
+			assertTrue(controllerSource.contains(field), "Missing movement diagnostic: " + field);
+	}
+
+	@Test
+	void followLocomotionOverrideIsTransientServerControlledAndDoesNotMutateStats() throws IOException {
+		String movement = Files.readString(Path.of("src/com/aionemu/gameserver/controllers/movement/PlayerMoveController.java"));
+		assertTrue(movement.contains("owner.getClientConnection() != null"));
+		assertTrue(movement.contains("serverControlledMovementSpeed"));
+		assertTrue(movement.contains("EmotionType.CHANGE_SPEED"));
+		assertTrue(movement.contains("new SM_EMOTION(owner, EmotionType.CHANGE_SPEED, owner.getGameStats().getMovementSpeedFloat())"));
+		assertFalse(movement.contains("getGameStats().addEffect"));
+		assertFalse(movement.contains("getGameStats().endEffect"));
+		assertFalse(movement.contains("setMovementSpeed"));
+
+		String combat = Files.readString(Path.of("src/com/aionemu/gameserver/services/ai/combat/DefaultCombatActionGateway.java"));
+		assertFalse(combat.contains("serverControlledMovementSpeed"));
+		assertFalse(combat.contains("effectiveFollowSpeed"));
+
+		String scheduler = Files.readString(Path.of("src/com/aionemu/gameserver/services/ai/SyntheticPlayerScheduler.java"));
+		assertFalse(scheduler.contains("Breadcrumb"));
+		assertFalse(scheduler.contains("catchUp"));
 	}
 
 	@Test

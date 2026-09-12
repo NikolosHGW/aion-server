@@ -54,6 +54,16 @@ public class SM_EMOTION extends AionServerPacket {
 		this(creature, emotionType, 0, 0);
 	}
 
+	public SM_EMOTION(Creature creature, EmotionType emotionType, float movementSpeed) {
+		this.senderObjectId = creature.getObjectId();
+		this.emotionType = emotionType;
+		this.state = creature.getState();
+		Stat2 aSpeed = creature.getGameStats().getAttackSpeed();
+		this.baseAttackSpeed = aSpeed.getBase();
+		this.currentAttackSpeed = aSpeed.getCurrent();
+		this.speed = movementSpeed;
+	}
+
 	public SM_EMOTION(Creature creature, EmotionType emotionType, int emotion, int targetObjectId) {
 		this.senderObjectId = creature.getObjectId();
 		this.emotionType = emotionType;

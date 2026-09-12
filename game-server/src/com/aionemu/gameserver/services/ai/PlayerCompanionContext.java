@@ -1,7 +1,11 @@
 package com.aionemu.gameserver.services.ai;
 
 import com.aionemu.gameserver.model.gameobjects.player.Player;
+import com.aionemu.gameserver.model.actions.PlayerMode;
+import com.aionemu.gameserver.model.gameobjects.state.CreatureState;
+import com.aionemu.gameserver.model.stats.container.StatEnum;
 import com.aionemu.gameserver.utils.PositionUtil;
+import com.aionemu.gameserver.utils.stats.StatFunctions;
 import com.aionemu.gameserver.world.World;
 
 final class PlayerCompanionContext implements CompanionContext {
@@ -75,6 +79,11 @@ final class PlayerCompanionContext implements CompanionContext {
 	}
 
 	@Override
+	public float ownerEffectiveGroundSpeed() {
+		return StatFunctions.adjustStatByMovementModifier(owner, StatEnum.SPEED, owner.getGameStats().getMovementSpeedFloat());
+	}
+
+	@Override
 	public boolean companionInWorld() {
 		return World.getInstance().findVisibleObject(companion.getObjectId()) == companion;
 	}
@@ -95,7 +104,41 @@ final class PlayerCompanionContext implements CompanionContext {
 	}
 
 	@Override
+	public float companionX() {
+		return companion.getX();
+	}
+
+	@Override
+	public float companionY() {
+		return companion.getY();
+	}
+
+	@Override
+	public float companionZ() {
+		return companion.getZ();
+	}
+
+	@Override
+	public float companionNativeGroundSpeed() {
+		return companion.getGameStats().getMovementSpeedFloat();
+	}
+
+	@Override
+	public boolean supportedGroundMovement() {
+		return isSupportedGroundMovement(owner) && isSupportedGroundMovement(companion);
+	}
+
+	@Override
+	public boolean companionMovementAllowed() {
+		return companion.canPerformMove();
+	}
+
+	@Override
 	public double distanceToOwner() {
 		return PositionUtil.getDistance(companion, owner);
+	}
+
+	private boolean isSupportedGroundMovement(Player player) {
+		return !player.isInPlayerMode(PlayerMode.RIDE) && !player.isInFlyingState() && !player.isInState(CreatureState.GLIDING);
 	}
 }

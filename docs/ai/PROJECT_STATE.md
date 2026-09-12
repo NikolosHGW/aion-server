@@ -1,6 +1,6 @@
 # AI MVP: текущее состояние
 
-Дата: 2026-09-11
+Дата: 2026-09-12
 
 Это короткая точка входа в эксперимент. Главный продуктовый ориентир —
 [`PRODUCT_VISION_AND_ROADMAP.md`](../../PRODUCT_VISION_AND_ROADMAP.md). Технические границы и
@@ -21,6 +21,11 @@
 
 Все шесть ADR и этапы 1/2A/2B/2C/2D/2E/2F приняты владельцем после ручных
 проверок в реальном клиенте. Финальная автопроверка 2F: 166 tests,
+failures/errors/skips `0/0/0`.
+
+2G Navigation Hardening принят вручную в реальном Aion client. Это не новый
+продуктовый slice и не новый ADR: он узко укрепляет принятый 2A follow. До
+full-reactor проверки finalization targeted набор содержал 73 tests,
 failures/errors/skips `0/0/0`.
 
 ## Неизменные инварианты
@@ -47,6 +52,35 @@ create, dismiss/summon, follow, relogin и полного restart; foreign owner
 quest-goal/execution, owner attribution и persistence подтверждены. Этап 3 ещё
 не начат.
 
+### 2G — Navigation Hardening
+
+`PERSONAL_COMPANION` сохраняет основной 2A follow contract, но теперь имеет
+структурированные причины movement rejection и диагностируемые retry/recovery
+status. На близкой дистанции follow пробует ограниченный local recovery через
+`REAR`, `REAR_LEFT`, `REAR_RIGHT`. При значительном отставании он хранит только
+runtime bounded owner breadcrumb trail: sampling начинается сразу в FOLLOWING,
+ограничен entries/age/path length, а map/instance/time/неправдоподобные
+spatial discontinuity fail-closed разрывают continuity.
+
+Каждый breadcrumb остаётся лишь navigation hint: segment проходит обычные
+map/instance, geodata/Z, collision, LoS и start-revalidation проверки. Если
+первая breadcrumb небезопасна из-за локального world-prop/geodata seam,
+разрешён только bounded chronological look-ahead из трёх точек; более поздняя
+точка принимается исключительно после собственного полного gateway check.
+Teleport, direct position mutation и universal pathfinding отсутствуют.
+
+Для ground FOLLOWING доступен transient server-controlled locomotion override:
+минимум native speed companion и current effective ground speed owner, плюс
+малый bounded catch-up при большом separation. Он не меняет `GameStats`, buff,
+item, equipment или DB, не применяется connected player, запрещён при native
+movement restriction/flight/glide/ride и временно подавляется принятым combat
+signal. Это не combat mobility.
+
+Ручная 2G-приёмка подтвердила ordinary follow, speed-scroll owner, bounded
+catch-up, hill/curved-road breadcrumbs, отсутствие false-positive `Z_JUMP`,
+безопасный look-ahead вокруг world geometry и самостоятельное догоняние без
+teleport/direct mutation/pathfinding.
+
 Принято следующее продуктовое направление для PERSONAL_COMPANION: character
 level будет синхронизирован с owner 1:1, без самостоятельного XP и второй native
 reward share; gear не зеркалируется, а inventory/equipment остаются отдельным
@@ -56,8 +90,11 @@ account-scoped mechanics.
 
 ## Наблюдения для следующих slices
 
-- Follow может кратко блокироваться геодатой; в ручной 2E-проверке companion
-  продолжил движение после перемещения owner.
+- Universal pathfinding/navmesh отсутствует. 2G безопасно harden'ит только
+  direct segments, local offsets и bounded owner breadcrumbs; disconnected
+  companion без пригодного trail остаётся fail-closed BLOCKED.
+- Flight, glide, ride/mount и специальные movement modes не имеют catch-up
+  support.
 - Combat status сворачивает конкретный quest authorization reason в общий
   `TARGET_NOT_ALLOWED`; отдельный spawn template `210133` был безопасно отклонён
   как отсутствующий в immutable manifest.

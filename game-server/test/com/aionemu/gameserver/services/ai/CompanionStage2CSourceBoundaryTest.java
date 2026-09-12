@@ -23,7 +23,7 @@ class CompanionStage2CSourceBoundaryTest {
 			.collect(Collectors.toSet());
 		Set<String> combatMethods = List.of(CombatActionGateway.class.getDeclaredMethods()).stream().map(method -> method.getName())
 			.collect(Collectors.toSet());
-		assertEquals(Set.of("checkMovement", "startMove", "stopMove"), movementMethods);
+		assertEquals(Set.of("checkMovement", "startMove", "stopMove", "clearServerControlledMovementSpeed"), movementMethods);
 		assertEquals(Set.of("basicHitOnce", "stop"), combatMethods);
 	}
 

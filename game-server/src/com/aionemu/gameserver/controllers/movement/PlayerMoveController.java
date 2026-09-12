@@ -1,9 +1,11 @@
 package com.aionemu.gameserver.controllers.movement;
 
 import com.aionemu.gameserver.configs.main.FallDamageConfig;
+import com.aionemu.gameserver.model.EmotionType;
 import com.aionemu.gameserver.model.gameobjects.player.Player;
 import com.aionemu.gameserver.network.aion.serverpackets.SM_ATTACK_STATUS.LOG;
 import com.aionemu.gameserver.network.aion.serverpackets.SM_ATTACK_STATUS.TYPE;
+import com.aionemu.gameserver.network.aion.serverpackets.SM_EMOTION;
 import com.aionemu.gameserver.network.aion.serverpackets.SM_MOVE;
 import com.aionemu.gameserver.services.player.PlayerReviveService;
 import com.aionemu.gameserver.skillengine.model.Skill;
@@ -24,6 +26,7 @@ public class PlayerMoveController extends PlayableMoveController<Player> {
 	private long lastPositionFromClientMillis;
 	private WorldPosition lastPositionFromClient;
 	private long lastRandomMoveLocEffectTimeMillis;
+	private volatile float serverControlledMovementSpeed = Float.NaN;
 
 	public PlayerMoveController(Player owner) {
 		super(owner);
@@ -52,6 +55,42 @@ public class PlayerMoveController extends PlayableMoveController<Player> {
 		return true;
 	}
 
+	/**
+	 * Applies only to movement calculated by this controller. It deliberately does not alter PlayerGameStats.
+	 */
+	public boolean setServerControlledMovementSpeed(float speed) {
+		if (!isServerControlledMovementSpeedAllowed(owner.getClientConnection() != null, speed))
+			return false;
+		if (Float.compare(serverControlledMovementSpeed, speed) == 0)
+			return true;
+		serverControlledMovementSpeed = speed;
+		PacketSendUtility.broadcastToSightedPlayers(owner, new SM_EMOTION(owner, EmotionType.CHANGE_SPEED, speed), true);
+		return true;
+	}
+
+	static boolean isServerControlledMovementSpeedAllowed(boolean clientConnected, float speed) {
+		return !clientConnected && Float.isFinite(speed) && speed > 0;
+	}
+
+	public void clearServerControlledMovementSpeed() {
+		if (!Float.isFinite(serverControlledMovementSpeed))
+			return;
+		serverControlledMovementSpeed = Float.NaN;
+		PacketSendUtility.broadcastToSightedPlayers(owner,
+			new SM_EMOTION(owner, EmotionType.CHANGE_SPEED, owner.getGameStats().getMovementSpeedFloat()), true);
+	}
+
+	public boolean hasServerControlledMovementSpeed() {
+		return Float.isFinite(serverControlledMovementSpeed);
+	}
+
+	@Override
+	protected float getEffectiveMovementSpeed() {
+		return owner.getClientConnection() == null && Float.isFinite(serverControlledMovementSpeed)
+			? serverControlledMovementSpeed
+			: super.getEffectiveMovementSpeed();
+	}
+
 	public void stopServerControlledMove() {
 		abortMove();
 	}
@@ -59,6 +98,7 @@ public class PlayerMoveController extends PlayableMoveController<Player> {
 	@Override
 	public void abortMove() {
 		super.abortMove();
+		clearServerControlledMovementSpeed();
 		stopFalling(owner.getZ());
 	}
 

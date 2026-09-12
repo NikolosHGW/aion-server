@@ -168,11 +168,11 @@ public final class CompanionService {
 			CompanionCombatController combatController = new CompanionCombatController(owner.getObjectId(), companion.getObjectId(), combatSessionId,
 				combatSignalSource, combatGateway, this::isCombatFeatureEnabled, System::currentTimeMillis, AIConfig.COMPANION_COMBAT_OWNER_SIGNAL_TTL_MS);
 			CompanionController controller = new CompanionController(new PlayerCompanionContext(owner, companion),
-				new DefaultPlayerActionGateway(companion, owner), settings, this::dismissFromRuntime, System::currentTimeMillis, () -> {
+				new DefaultPlayerActionGateway(companion, owner, true), settings, this::dismissFromRuntime, System::currentTimeMillis, () -> {
 					maintainGoalSession();
 					executionRuntime.pollIfDue();
 					combatController.tick();
-				});
+				}, combatController::isFollowCatchUpSuppressed);
 			controlledPlayer = new ServerControlledPlayer(companion, templateDatabaseName, runtimeName, SyntheticPlayerRole.COMPANION, controller,
 				() -> AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED, this::dismissFromRuntime);
 			CompanionSession newSession = new CompanionSession(owner, controlledPlayer, controller,
@@ -499,6 +499,7 @@ public final class CompanionService {
 			+ ", followStartDistance=" + AIConfig.COMPANION_FOLLOW_START_DISTANCE
 			+ ", followStopDistance=" + AIConfig.COMPANION_FOLLOW_STOP_DISTANCE
 			+ ", lastBlockedReason=" + current.controller().getLastBlockedReason()
+			+ ", " + current.controller().getMovementDiagnostics()
 			+ ", combatFeatureEnabled=" + isCombatFeatureEnabled()
 			+ ", " + current.combatController().status()
 			+ ", questGoalFeatureEnabled=" + AIConfig.COMPANION_QUEST_GOALS_ENABLED
