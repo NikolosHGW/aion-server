@@ -103,3 +103,28 @@ account-scoped mechanics.
   account-scoped warehouse/state.
 - Legacy 2E binding без creation claim при включённом 2F намеренно не
   усыновляется; это fail-closed migration boundary.
+
+  ### Platform direction
+
+Aion остаётся самостоятельным продуктом и первой reference-интеграцией
+будущего game-agnostic Living World Engine.
+
+Новые системы по возможности классифицируются как:
+
+- `AION_ADAPTER_SPECIFIC`;
+- `MMO_DOMAIN_REUSABLE`;
+- `LIVING_WORLD_CORE_REUSABLE`.
+
+Это пока не означает физическое разделение репозитория.
+
+Aion-specific authoritative mechanics остаются внутри Aion integration layer.
+
+Living World Core и domain modules не должны находиться на realtime gameplay
+hot path. Movement/combat/skills/collision/geodata и другие latency-sensitive
+действия выполняются локально game-specific controllers/adapters.
+
+Adapter должен быть локально deployable с игровым сервером; его конкретная
+форма может быть in-process plugin/module, server resource или thin integration
+shim + local sidecar.
+
+Текущая модель лицензирования Adapter не зафиксирована.

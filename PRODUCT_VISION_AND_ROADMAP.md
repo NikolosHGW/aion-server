@@ -679,3 +679,351 @@ AI начинают ограниченно добывать, создавать,
 Если технический план противоречит этому документу, противоречие должно быть
 явно обсуждено. Техническая сложность может изменить путь и порядок работ, но
 не должна незаметно подменять продуктовую цель.
+
+## Платформенное направление: Living World Engine
+
+Aion является первой reference-интеграцией и испытательным полигоном
+будущего игрово-независимого Living World Engine — движка оживления
+игровых миров.
+
+Продуктовая концепция Aion при этом не меняется.
+
+Целью остаётся живой мир Aion с постоянным персональным ИИ-компаньоном
+и автономными ИИ-игроками, которые реально участвуют в игре через
+нативные механики Aion: перемещаются, сражаются, развиваются, получают
+экипировку, выполняют задания, торгуют, объединяются в группы и гильдии,
+ходят в данжи, конфликтуют и взаимодействуют с людьми и друг с другом.
+
+Aion должен быть полноценным самостоятельным продуктом, а не
+искусственно упрощённой демонстрацией универсального движка.
+
+Главный принцип:
+
+> Не делать Aion менее Aion ради универсальности.
+
+Универсальная архитектура должна появляться постепенно из реальных
+потребностей первой работающей интеграции, а не проектироваться заранее
+в виде абстрактного framework без подтверждённых use cases.
+
+
+### Архитектурные уровни
+
+Будущая платформа разделяется на три основных уровня.
+
+
+#### 1. Living World Core
+
+Игрово-независимое ядро отвечает за понятия, которые имеют смысл
+в разных типах игровых миров:
+
+- identity агента;
+- personality и traits;
+- memory;
+- relationships;
+- needs;
+- utility;
+- goals;
+- planning;
+- high-level intents;
+- schedules;
+- социальные решения;
+- observe → remember → decide → act lifecycle;
+- общие world events;
+- optional LLM layer;
+- optional World Director.
+
+Living World Core не должен напрямую зависеть от классов и типов
+конкретного игрового сервера, если рассматриваемое поведение не является
+по своей природе специфичным для этой игры.
+
+
+#### 2. Domain Modules
+
+Между универсальным Core и конкретной игрой располагаются переиспользуемые
+предметные модули.
+
+Они описывают семантику определённого типа мира, но не знают деталей
+конкретного игрового сервера.
+
+Примеры:
+
+MMO Domain:
+
+- progression;
+- questing;
+- grinding;
+- loot;
+- trading;
+- party;
+- guild;
+- dungeon;
+- MMO economy;
+- PvE/PvP activities.
+
+City Simulation Domain:
+
+- jobs;
+- businesses;
+- commodities;
+- supply chains;
+- city economy;
+- law;
+- crime;
+- police;
+- factions;
+- territory.
+
+Survival Sandbox Domain:
+
+- gathering;
+- crafting;
+- building;
+- exploration;
+- settlements;
+- survival.
+
+Игра может использовать несколько domain modules одновременно.
+
+Например:
+
+Aion
+= Living World Core
++ MMO Domain
++ Aion Adapter
+
+Minecraft
+= Living World Core
++ Survival Sandbox Domain
++ при необходимости Economy/Factions modules
++ Minecraft Adapter
+
+GTA-like world
+= Living World Core
++ City Simulation Domain
++ Economy/Factions modules
++ GTA Adapter.
+
+
+#### 3. Game Adapter / Integration Layer
+
+Adapter связывает универсальную платформу с конкретным игровым сервером.
+
+Он переводит игровые observations в понятную движку модель мира и
+переводит high-level intents движка в разрешённые действия конкретной игры.
+
+Для Aion на стороне adapter/integration находятся, например:
+
+- Beyond Aion Player;
+- QuestState;
+- ItemStorage;
+- equipment;
+- stigmas;
+- Aion movement;
+- GeoService;
+- combat contribution;
+- native persistence;
+- native death/respawn;
+- другие authoritative механики Aion.
+
+Core и domain modules не должны знать о Beyond Aion типах напрямую.
+
+Adapter является архитектурной границей интеграции, а не обязательно
+отдельным сетевым сервисом.
+
+
+### Runtime и граница по latency
+
+Living World Engine не должен находиться на latency-sensitive hot path
+игрового сервера.
+
+Высокочастотные realtime-механики остаются локальными для конкретной игры:
+
+- movement execution;
+- combat execution;
+- skill execution;
+- cooldowns;
+- collision;
+- physics;
+- geodata;
+- realtime target validation;
+- packet/state updates;
+- другие операции игрового тика.
+
+Living World Core и domain modules работают преимущественно на более
+высоком уровне:
+
+- выбор целей;
+- выбор activity;
+- planning;
+- memory;
+- relationships;
+- social decisions;
+- economy;
+- faction decisions;
+- long-term behaviour;
+- optional LLM reasoning;
+- world-level direction.
+
+Core не должен принимать решение о каждом шаге, повороте, ударе или
+игровом тике агента.
+
+Например, Living World Engine может принять решение:
+
+    "помогать владельцу выполнять текущий квест"
+
+или:
+
+    "фармить мобов в области X до заполнения инвентаря"
+
+После этого локальные game-specific controllers способны выполнять
+принятую activity самостоятельно без обращения к Core на каждый шаг.
+
+
+### Локальное исполнение и варианты развёртывания Adapter
+
+Adapter должен быть deployable непосредственно рядом с игровым сервером.
+
+В зависимости от возможностей конкретной серверной платформы интеграция
+может быть реализована как:
+
+- module/plugin непосредственно внутри процесса игрового сервера;
+- server resource;
+- package/library, подключаемая серверным приложением;
+- тонкий in-process integration shim вместе с локальным sidecar process.
+
+Например:
+
+- Beyond Aion может использовать Java integration непосредственно внутри GameServer;
+- Minecraft может использовать серверный plugin;
+- Node.js-based game server может подключать adapter как package/module;
+- GTA server platform может использовать собственный plugin/resource mechanism.
+
+Предпочтительно, чтобы realtime action execution имел локальный доступ
+к native game API и не требовал remote network round-trip.
+
+
+### In-process и sidecar
+
+Размещение Adapter на одной машине с игровым сервером само по себе не
+гарантирует отсутствие влияния на производительность.
+
+Любая интеграция использует CPU, память и scheduler time.
+
+Поэтому Adapter должен соблюдать performance boundary:
+
+- никаких LLM-вызовов на игровом hot path;
+- никакого blocking remote I/O на игровом tick/event loop;
+- никаких неограниченных world scans;
+- bounded queues и bounded work per tick;
+- backpressure при перегрузке;
+- batching/coalescing observations там, где это допустимо;
+- graceful degradation при перегрузке Living World Engine;
+- измеряемые CPU, latency, queue depth и game tick/event-loop metrics.
+
+Если Adapter находится непосредственно внутри процесса игры, это даёт
+минимальную стоимость вызова и прямой доступ к game API, но повышает
+требования к изоляции ошибок и ограничению CPU/GC нагрузки.
+
+Если тяжёлая часть Adapter работает локальным sidecar process, появляется
+небольшая IPC/serialization стоимость, но улучшается изоляция и становится
+возможным отдельно ограничивать CPU/RAM.
+
+Конкретный вариант выбирается для каждой игровой платформы отдельно.
+
+
+### Поведение при недоступности Living World Engine
+
+Потеря соединения с внешним Living World Core не должна останавливать
+игровой сервер и по возможности не должна превращать уже действующих
+ИИ-агентов в неподвижные объекты.
+
+Уже принятая локальная activity может продолжать выполняться локальными
+controllers в пределах безопасного заранее принятого контракта.
+
+Game-specific safety rules всегда остаются authoritative.
+
+Если продолжение activity невозможно безопасно, агент должен перейти
+в безопасное локальное состояние, а не обходить игровые ограничения.
+
+
+### Performance как часть Adapter contract
+
+Для каждой интеграции должны существовать отдельные performance tests.
+
+Нельзя считать Adapter безопасным только потому, что он работает
+на той же машине или использует localhost.
+
+Нужно измерять как минимум:
+
+- влияние на game tick / event-loop latency;
+- CPU;
+- memory;
+- GC pressure;
+- количество обрабатываемых AI agents;
+- action throughput;
+- queue depth;
+- p95/p99 latency локального исполнения;
+- поведение при недоступном или медленном Core.
+
+При перегрузке Living World AI должен деградировать раньше, чем
+authoritative игровой сервер.
+
+
+### Направление зависимостей
+
+Желаемое направление зависимостей:
+
+Living World Core
+        ↓
+Domain Modules
+        ↓
+Game-neutral capabilities / intents
+        ↓
+Game Adapter
+        ↓
+Local controllers / action gateways
+        ↓
+Authoritative native game mechanics
+
+Зависимость в обратную сторону не допускается:
+
+Living World Core не должен импортировать Beyond Aion Player,
+Minecraft Entity, GTA server object или другие конкретные game-server types.
+
+
+### Стратегия развития
+
+Aion является первым reference implementation, из которого архитектура
+Living World Engine будет извлекаться постепенно.
+
+Не следует преждевременно выносить всё существующее AI-кодирование Aion
+в отдельный универсальный framework.
+
+Aion-specific механики должны оставаться Aion-specific.
+
+Кандидатами на последующее извлечение в Core или domain modules становятся
+только абстракции, универсальность которых подтверждена реальной реализацией.
+
+При разработке новых систем полезно классифицировать их как:
+
+- AION_ADAPTER_SPECIFIC;
+- MMO_DOMAIN_REUSABLE;
+- LIVING_WORLD_CORE_REUSABLE.
+
+Такая классификация пока является архитектурным ориентиром и не требует
+немедленного физического разделения репозитория.
+
+
+### Распространение и лицензирование Adapter
+
+Архитектура должна позволять распространять Adapter отдельно и устанавливать
+его непосредственно рядом с игровым сервером.
+
+В будущем Adapter может распространяться как бесплатный plugin/package,
+что снизит порог подключения игровых серверов к Living World Engine.
+
+Однако конкретная модель лицензирования — open-source, source-available,
+free binary или commercial — на текущем этапе не фиксируется.
+
+Это бизнес-решение не должно влиять на техническое требование:
+latency-sensitive execution остаётся локальным.
