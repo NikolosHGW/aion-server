@@ -10,17 +10,17 @@ import com.aionemu.gameserver.utils.chathandlers.AdminCommand;
 public class Companion extends AdminCommand {
 
 	public Companion() {
-		super("companion", "Controls the single runtime companion.");
-		setSyntaxInfo(
-			"<create> - Create your persistent personal companion once; does not summon it.",
-			"<summon> - Spawn your already-created persistent companion.",
-			"<follow> - Resume following you.",
-			"<stay> - Stop and remain in the world.",
-			"<assist on|off|status> - Arm or disarm one-hit reactions to owner attack events.",
-			"<dismiss> - Remove the companion without persistence.",
-			"<status> - Show owner, lifecycle, movement and world diagnostics.",
-			"<today> - Offer one read-only quest goal from the configured allowlist.",
-			"<goal choose|status|clear> - Manage the persistent quest goal intent.");
+		super("companion", "Controls the single runtime companion.", """
+			<create> - Create your persistent personal companion once; does not summon it.
+			<summon> - Spawn your already-created persistent companion.
+			<follow> - Resume following you.
+			<stay> - Stop and remain in the world.
+			<assist on|off|status> - Arm or disarm one-hit reactions to owner attack events.
+			<dismiss> - Remove the companion without persistence.
+			<status> - Show owner, lifecycle, movement and world diagnostics.
+			<today> - Offer one read-only quest goal from the configured allowlist.
+			<goal choose|status|clear> - Manage the persistent quest goal intent.
+			""");
 	}
 
 	@Override

@@ -36,7 +36,7 @@ public final class DefaultPlayerActionGateway implements PlayerActionGateway {
 			return MovementResult.rejected(phase, MovementRejectionReason.DESTINATION_NOT_FINITE, x, y, z);
 		if (!Float.isFinite(x) || !Float.isFinite(y) || !Float.isFinite(z))
 			return MovementResult.rejected(phase, MovementRejectionReason.DESTINATION_NOT_FINITE, x, y, z);
-		if (!GeoDataConfig.GEO_ENABLE || !GeoDataConfig.CANSEE_ENABLE)
+		if (GeoDataConfig.MODE != GeoDataConfig.Mode.ON || !GeoDataConfig.CANSEE_ENABLE)
 			return MovementResult.rejected(phase, MovementRejectionReason.GEODATA_OR_LOS_DISABLED, x, y, z);
 		if (!player.isInWorld() || !player.isSpawned())
 			return MovementResult.rejected(phase, MovementRejectionReason.COMPANION_NOT_IN_WORLD, x, y, z);

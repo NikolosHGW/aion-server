@@ -1,8 +1,8 @@
 package com.aionemu.gameserver.skillengine.condition;
 
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
-import javax.xml.bind.annotation.XmlType;
+import jakarta.xml.bind.annotation.XmlAccessType;
+import jakarta.xml.bind.annotation.XmlAccessorType;
+import jakarta.xml.bind.annotation.XmlType;
 
 import com.aionemu.gameserver.model.stats.calc.Stat2;
 import com.aionemu.gameserver.model.stats.calc.functions.IStatFunction;
@@ -18,16 +18,16 @@ public class OnFlyCondition extends Condition {
 
 	@Override
 	public boolean validate(Skill env) {
-		return env.getEffector().isFlying();
+		return env.getEffector().isInFlyingState();
 	}
 
 	@Override
 	public boolean validate(Stat2 stat, IStatFunction statFunction) {
-		return stat.getOwner().isFlying();
+		return stat.getOwner().isInFlyingState();
 	}
 
 	@Override
 	public boolean validate(Effect effect) {
-		return effect.getEffected().isFlying();
+		return effect.getEffected().isInFlyingState();
 	}
 }

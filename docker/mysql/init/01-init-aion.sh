@@ -9,11 +9,7 @@ SQL
 
 mysql -uroot aion_ls < /aion-server/login-server/sql/aion_ls.sql
 
-# The current fresh GS schema has a missing comma before bookmark_ibfk_1.
-# Patch it only for import, leaving the repository SQL untouched.
-sed 's/PRIMARY KEY (`player_id`, `name`)/PRIMARY KEY (`player_id`, `name`),/' \
-  /aion-server/game-server/sql/aion_gs.sql > /tmp/aion_gs.sql
-mysql -uroot aion_gs < /tmp/aion_gs.sql
+mysql -uroot aion_gs < /aion-server/game-server/sql/aion_gs.sql
 
 mysql -uroot aion_cs < /aion-server/chat-server/sql/aion_cs.sql
 

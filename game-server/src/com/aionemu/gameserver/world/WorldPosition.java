@@ -63,7 +63,7 @@ public class WorldPosition {
 	 */
 	public int getMapId() {
 		if (mapId == 0)
-			log.warn("WorldPosition has (mapId == 0) " + this.toString());
+			log.warn("WorldPosition has (mapId == 0) {}", this.toString());
 		return mapId;
 	}
 
@@ -110,6 +110,14 @@ public class WorldPosition {
 
 	public int getInstanceId() {
 		return mapRegion == null ? 1 : mapRegion.getParent().getInstanceId();
+	}
+
+	/**
+	 * @return The world id the client knows this map instance by: the map id plus the channel (instance id - 1), negated on personal maps.
+	 */
+	public int getClientWorldId() {
+		int worldId = mapId + getInstanceId() - 1;
+		return WorldMapType.getWorld(mapId).isPersonal() ? -worldId : worldId;
 	}
 
 	/**
@@ -219,6 +227,6 @@ public class WorldPosition {
 	}
 
 	public String toCoordString() {
-		return "Map ID: " + mapId + ", Instance ID: " + getInstanceId() + "\nX: " + x + ", Y: " + y + ", Z: " + z + ", Heading: " + heading;
+		return "Map ID: " + mapId + ", Instance ID: " + getInstanceId() + ", X: " + x + ", Y: " + y + ", Z: " + z + ", Heading: " + heading;
 	}
 }

@@ -13,7 +13,7 @@ class CompanionStage2BSourceBoundaryTest {
 
 	@Test
 	void configurationIsDefaultOffWithAnEmptyAllowlist() throws IOException {
-		String properties = Files.readString(Path.of("config/main/ai.properties"));
+		String properties = Files.readString(Path.of("config/main/ai.properties")).replace("\r\n", "\n");
 		assertTrue(properties.contains("ai.companions.quest_goals.enabled = false"));
 		assertTrue(properties.contains("ai.companions.quest_goals.allowed_quest_ids =\n"));
 	}

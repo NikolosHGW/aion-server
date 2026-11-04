@@ -64,7 +64,7 @@ public class AccountPassportsDAO {
 				account.setLastStamp(lastStamp);
 			}
 		} catch (Exception e) {
-			log.error("Could not restore completed passport data for account: {} from DB.", account.getId(), e);
+			log.error("Could not restore completed passport data for account: {} from DB", account.getId(), e);
 		}
 	}
 
@@ -92,7 +92,7 @@ public class AccountPassportsDAO {
 			ps.setTimestamp(4, passport.getArriveDate());
 			ps.executeUpdate();
 		} catch (SQLException e) {
-			log.error("Error while adding passports for account {}.", accountId, e);
+			log.error("Error while adding passports for account {}", accountId, e);
 		}
 	}
 
@@ -104,7 +104,7 @@ public class AccountPassportsDAO {
 			ps.setTimestamp(4, passport.getArriveDate());
 			ps.executeUpdate();
 		} catch (SQLException e) {
-			log.error("Failed to update existing passports for account {}.", accountId, e);
+			log.error("Failed to update existing passports for account {}", accountId, e);
 		}
 	}
 
@@ -115,7 +115,7 @@ public class AccountPassportsDAO {
 			ps.setTimestamp(3, passport.getArriveDate());
 			ps.executeUpdate();
 		} catch (SQLException e) {
-			log.error("Failed to delete passports for account {}.", accountId, e);
+			log.error("Failed to delete passports for account {}", accountId, e);
 		}
 	}
 
@@ -126,7 +126,7 @@ public class AccountPassportsDAO {
 			ps.setTimestamp(3, null);
 			ps.executeUpdate();
 		} catch (SQLException e) {
-			log.error("Error while adding stamps for account {}.", accountId, e);
+			log.error("Error while adding stamps for account {}", accountId, e);
 		}
 	}
 
@@ -137,7 +137,7 @@ public class AccountPassportsDAO {
 			ps.setInt(3, account.getId());
 			ps.executeUpdate();
 		} catch (SQLException e) {
-			log.error("Failed to update existing passports for account {}.", account.getId(), e);
+			log.error("Failed to update existing passports for account {}", account.getId(), e);
 		}
 	}
 
@@ -145,7 +145,7 @@ public class AccountPassportsDAO {
 		try (Connection con = DatabaseFactory.getConnection(); PreparedStatement ps = con.prepareStatement(RESET_LAST_STAMPS_QUERY)) {
 			ps.executeUpdate();
 		} catch (SQLException e) {
-			log.error("Failed to reset all last stamps.", e);
+			log.error("Failed to reset all last stamps", e);
 		}
 	}
 
@@ -153,7 +153,7 @@ public class AccountPassportsDAO {
 		try (Connection con = DatabaseFactory.getConnection(); PreparedStatement ps = con.prepareStatement(RESET_STAMPS_QUERY)) {
 			ps.executeUpdate();
 		} catch (SQLException e) {
-			log.error("Failed to reset all stamps.", e);
+			log.error("Failed to reset all stamps", e);
 		}
 	}
 

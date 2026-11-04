@@ -1,6 +1,7 @@
 package com.aionemu.gameserver.controllers.movement;
 
-import java.util.LinkedList;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 
 import org.slf4j.Logger;
@@ -13,6 +14,7 @@ import com.aionemu.gameserver.ai.NpcAI;
 import com.aionemu.gameserver.ai.handler.TargetEventHandler;
 import com.aionemu.gameserver.ai.manager.WalkManager;
 import com.aionemu.gameserver.configs.main.GeoDataConfig;
+import com.aionemu.gameserver.configs.main.GeoDataConfig.Mode;
 import com.aionemu.gameserver.dataholders.DataManager;
 import com.aionemu.gameserver.geoEngine.collision.IgnoreProperties;
 import com.aionemu.gameserver.model.gameobjects.Creature;
@@ -51,7 +53,7 @@ public class NpcMoveController extends CreatureMoveController<Npc> {
 	private boolean nextPointFromGeo;
 	private boolean isStop;
 
-	private LinkedList<Point3D> lastSteps;
+	private Deque<Point3D> lastSteps;
 
 	private WalkerTemplate walkerTemplate;
 	private RouteStep currentStep;
@@ -80,18 +82,21 @@ public class NpcMoveController extends CreatureMoveController<Npc> {
 		}
 	}
 
-	public void moveToPoint(float x, float y, float z) {
-		if (started.compareAndSet(false, true)) {
-			if (owner.getAi().isLogging()) {
-				AILogger.moveinfo(owner, "MC: moveToPoint started");
-			}
-			destination = Destination.POINT;
-			pointX = x;
-			pointY = y;
-			pointZ = z;
-			updateLastMove();
-			owner.getController().onStartMove();
+	public boolean moveToPoint(float x, float y, float z) {
+		boolean startedMoving = started.compareAndSet(false, true);
+		if (!startedMoving && destination != Destination.POINT)
+			return false;
+		if (owner.getAi().isLogging()) {
+			AILogger.moveinfo(owner, "MC: moveToPoint (startedMoving=" + startedMoving + ")");
 		}
+		destination = Destination.POINT;
+		pointX = x;
+		pointY = y;
+		pointZ = z;
+		updateLastMove();
+		if (startedMoving)
+			owner.getController().onStartMove();
+		return true;
 	}
 
 	public void forcedMoveToPoint(float x, float y, float z) {
@@ -267,7 +272,7 @@ public class NpcMoveController extends CreatureMoveController<Npc> {
 		float newX = (targetDestX - ownerX) * distFraction + ownerX;
 		float newY = (targetDestY - ownerY) * distFraction + ownerY;
 		float newZ = (targetDestZ - ownerZ) * distFraction + ownerZ;
-		if (GeoDataConfig.GEO_NPC_MOVE && GeoDataConfig.GEO_ENABLE && owner.getAi().getSubState() != AISubState.WALK_PATH
+		if (GeoDataConfig.GEO_NPC_MOVE && GeoDataConfig.MODE == Mode.ON && owner.getAi().getSubState() != AISubState.WALK_PATH
 			&& owner.getAi().getState() != AIState.RETURNING && owner.getGameStats().getNextGeoZUpdate() < System.currentTimeMillis()) {
 			// fix Z if npc doesn't move to spawn point
 			if (owner.getSpawn().getX() != targetDestX || owner.getSpawn().getY() != targetDestY || owner.getSpawn().getZ() != targetDestZ) {
@@ -393,7 +398,7 @@ public class NpcMoveController extends CreatureMoveController<Npc> {
 
 			setWalkerTemplate(DataManager.WALKER_DATA.getWalkerTemplate(owner.getSpawn().getWalkerId()), 0);
 			if (walkerTemplate == null) {
-				log.warn("Bad Walker Id: " + owner.getSpawn().getWalkerId() + " - point: " + currentStep.getStepIndex());
+				log.warn("Bad Walker Id: {} - point: {}", owner.getSpawn().getWalkerId(), currentStep.getStepIndex());
 				return false;
 			}
 		}
@@ -428,7 +433,7 @@ public class NpcMoveController extends CreatureMoveController<Npc> {
 
 	private synchronized void tryStoreStep(float x, float y, float z) {
 		if (lastSteps == null)
-			lastSteps = new LinkedList<>();
+			lastSteps = new ArrayDeque<>(3);
 		Point3D lastStep = lastSteps.isEmpty() ? null : lastSteps.getLast();
 		if (lastStep == null || !PositionUtil.isInRange(lastStep.getX(), lastStep.getY(), lastStep.getZ(), x, y, z, 10)) {
 			if (owner.getAi().isLogging()) {

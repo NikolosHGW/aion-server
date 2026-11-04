@@ -1,8 +1,8 @@
 package com.aionemu.gameserver.skillengine.action;
 
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
-import javax.xml.bind.annotation.XmlType;
+import jakarta.xml.bind.annotation.XmlAccessType;
+import jakarta.xml.bind.annotation.XmlAccessorType;
+import jakarta.xml.bind.annotation.XmlType;
 
 import com.aionemu.gameserver.skillengine.effect.modifier.ActionModifiers;
 import com.aionemu.gameserver.skillengine.model.Skill;
@@ -18,9 +18,16 @@ public abstract class Action {
 
 	/**
 	 * Perform action specified in template
-	 * 
-	 * @param env
 	 */
 	public abstract boolean act(Skill skill);
+
+	/**
+	 * Checks whether {@link #act(Skill)} could be performed, without performing it.
+	 *
+	 * @return True, if the action can be performed
+	 */
+	public boolean canAct(Skill skill) {
+		return true;
+	}
 
 }

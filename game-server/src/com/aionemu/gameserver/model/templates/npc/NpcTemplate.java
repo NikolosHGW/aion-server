@@ -2,8 +2,8 @@ package com.aionemu.gameserver.model.templates.npc;
 
 import java.util.List;
 
-import javax.xml.bind.Unmarshaller;
-import javax.xml.bind.annotation.*;
+import jakarta.xml.bind.Unmarshaller;
+import jakarta.xml.bind.annotation.*;
 
 import com.aionemu.gameserver.model.Race;
 import com.aionemu.gameserver.model.TribeClass;
@@ -72,6 +72,9 @@ public class NpcTemplate extends CreatureTemplate {
 
 	@XmlAttribute(name = "cast_speed")
 	private int castSpeed = 1000;
+
+	@XmlAttribute(name = "cancel_level")
+	private int cancelLevel = 100;
 
 	@XmlAttribute(name = "flag_type")
 	private int flagType;
@@ -209,6 +212,10 @@ public class NpcTemplate extends CreatureTemplate {
 
 	public int getAttackRange() {
 		return attackRange;
+	}
+
+	public int getCancelLevel() {
+		return cancelLevel;
 	}
 
 	public int getCastSpeed() {

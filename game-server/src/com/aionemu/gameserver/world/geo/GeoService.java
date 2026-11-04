@@ -9,6 +9,7 @@ import com.aionemu.gameserver.ai.poll.AIQuestion;
 import com.aionemu.gameserver.configs.main.GeoDataConfig;
 import com.aionemu.gameserver.dataholders.DataManager;
 import com.aionemu.gameserver.geoEngine.GeoWorldLoader;
+import com.aionemu.gameserver.geoEngine.bounding.BoundingBox;
 import com.aionemu.gameserver.geoEngine.collision.CollisionIntention;
 import com.aionemu.gameserver.geoEngine.collision.CollisionResults;
 import com.aionemu.gameserver.geoEngine.collision.IgnoreProperties;
@@ -36,11 +37,14 @@ public class GeoService implements GameEngine {
 	@Override
 	public void init() {
 		DataManager.WORLD_MAPS_DATA.forEach(map -> geoMaps.put(map.getMapId(), new GeoMap(map.getMapId())));
-		if (GeoDataConfig.GEO_ENABLE) {
-			GeoWorldLoader.load(geoMaps.values());
-		} else {
-			LoggerFactory.getLogger(GeoService.class).warn("Geo data is disabled");
+		switch (GeoDataConfig.MODE) {
+			case MATERIALS_ONLY -> LoggerFactory.getLogger(GeoService.class).warn("Geo data is disabled with only materials active. Obstacle detection, terrain checks and terrain-based effects, such as lava damage, will not work.");
+			case OFF -> {
+				LoggerFactory.getLogger(GeoService.class).warn("Geo data is disabled. Obstacle detection, terrain checks and environment effects, such as lava damage, fortress shields or EoR recovery zones will not work.");
+				return;
+			}
 		}
+		GeoWorldLoader.load(geoMaps.values());
 	}
 
 	/**
@@ -63,6 +67,14 @@ public class GeoService implements GameEngine {
 	 */
 	public float getZ(int worldId, float x, float y, float zMax, float zMin, int instanceId) {
 		return geoMaps.get(worldId).getZ(x, y, zMax, zMin, instanceId);
+	}
+
+	/**
+	 * @return The surface Z coordinate at the objects position, nearest to the given zMax value, or {@link Float#NaN} if not found / less than zMin /
+	 *         too steep to stand on.
+	 */
+	public float getWalkableZ(VisibleObject object, float zMax, float zMin) {
+		return geoMaps.get(object.getWorldId()).getZ(object.getX(), object.getY(), zMax, zMin, object.getInstanceId(), true);
 	}
 
 	public CollisionResults getCollisions(VisibleObject object, float x, float y, float z, byte intentions, IgnoreProperties ignoreProperties) {
@@ -113,7 +125,7 @@ public class GeoService implements GameEngine {
 
 	private float getSeeCheckOffset(VisibleObject object) {
 		float height = object.getObjectTemplate().getBoundRadius().getUpper();
-		if (object instanceof Player p && p.isTransformed() && p.getTransformModel().getBanMovement() == 1) {
+		if (object instanceof Player p && p.isTransformed() && p.getTransformModel().cantMove()) {
 			NpcTemplate t = DataManager.NPC_DATA.getNpcTemplate(p.getTransformModel().getModelId());
 			if (t != null)
 				return t.getBoundRadius().getUpper();
@@ -185,12 +197,16 @@ public class GeoService implements GameEngine {
 		geoMaps.get(worldId).setDoorState(instanceId, doorId, open);
 	}
 
+	public BoundingBox getDoorBounds(int worldId, int doorId) {
+		return geoMaps.get(worldId).getDoorBounds(doorId);
+	}
+
 	public boolean worldHasTerrainMaterials(int worldId) {
-		return GeoDataConfig.GEO_MATERIALS_ENABLE && geoMaps.get(worldId).hasTerrainMaterials();
+		return geoMaps.get(worldId).hasTerrainMaterials();
 	}
 
 	public int getTerrainMaterialAt(int worldId, float x, float y, float z, int instanceId) {
-		return GeoDataConfig.GEO_MATERIALS_ENABLE ? geoMaps.get(worldId).getTerrainMaterialAt(x, y, z, instanceId) : 0;
+		return geoMaps.get(worldId).getTerrainMaterialAt(x, y, z, instanceId);
 	}
 
 	public static GeoService getInstance() {

@@ -2,10 +2,10 @@ package com.aionemu.gameserver.model.templates.item.actions;
 
 import java.util.List;
 
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
-import javax.xml.bind.annotation.XmlAttribute;
-import javax.xml.bind.annotation.XmlType;
+import jakarta.xml.bind.annotation.XmlAccessType;
+import jakarta.xml.bind.annotation.XmlAccessorType;
+import jakarta.xml.bind.annotation.XmlAttribute;
+import jakarta.xml.bind.annotation.XmlType;
 
 import com.aionemu.gameserver.configs.main.CustomConfig;
 import com.aionemu.gameserver.model.gameobjects.Creature;
@@ -100,7 +100,6 @@ public class SkillUseAction extends AbstractItemAction {
 	public void act(Player player, Item parentItem, Item targetItem, Object... params) {
 		Skill skill = SkillEngine.getInstance().getSkill(player, skillid, level, player.getTarget(), parentItem.getItemTemplate());
 		if (skill != null) {
-			player.getController().cancelUseItem();
 			skill.setItemObjectId(parentItem.getObjectId());
 			skill.useSkill();
 		}

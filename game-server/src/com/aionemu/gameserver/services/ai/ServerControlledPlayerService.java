@@ -43,7 +43,7 @@ public final class ServerControlledPlayerService {
 			throw new IllegalStateException("Stage 1 already has an active synthetic player");
 		if (AIConfig.SYNTHETIC_TEMPLATE_ACCOUNT_ID <= 0 || AIConfig.SYNTHETIC_TEMPLATE_CHARACTER_ID <= 0)
 			throw new IllegalStateException("Template account and character IDs must be configured");
-		if (!GeoDataConfig.GEO_ENABLE || !GeoDataConfig.CANSEE_ENABLE)
+		if (GeoDataConfig.MODE != GeoDataConfig.Mode.ON || !GeoDataConfig.CANSEE_ENABLE)
 			throw new IllegalStateException("Stage 1 route validation requires geodata and can-see checks");
 
 		int objectId = AIConfig.SYNTHETIC_TEMPLATE_CHARACTER_ID;

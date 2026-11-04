@@ -1,9 +1,9 @@
 package com.aionemu.gameserver.skillengine.action;
 
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
-import javax.xml.bind.annotation.XmlAttribute;
-import javax.xml.bind.annotation.XmlType;
+import jakarta.xml.bind.annotation.XmlAccessType;
+import jakarta.xml.bind.annotation.XmlAccessorType;
+import jakarta.xml.bind.annotation.XmlAttribute;
+import jakarta.xml.bind.annotation.XmlType;
 
 import com.aionemu.gameserver.model.gameobjects.player.Player;
 import com.aionemu.gameserver.network.aion.serverpackets.SM_SYSTEM_MESSAGE;
@@ -22,14 +22,25 @@ public class DpUseAction extends Action {
 
 	@Override
 	public boolean act(Skill skill) {
-		Player effector = (Player) skill.getEffector();
-		int currentDp = effector.getCommonData().getDp();
-
+		if (!(skill.getEffector() instanceof Player player))
+			return true;
+		int currentDp = player.getCommonData().getDp(); // read once, setDp has no lower bound
 		if (currentDp <= 0 || currentDp < value) {
-			PacketSendUtility.sendPacket(effector, SM_SYSTEM_MESSAGE.STR_SKILL_NOT_ENOUGH_DP());
+			PacketSendUtility.sendPacket(player, SM_SYSTEM_MESSAGE.STR_SKILL_NOT_ENOUGH_DP());
 			return false;
 		}
-		effector.getCommonData().setDp(currentDp - value);
+		player.getCommonData().setDp(currentDp - value);
 		return true;
+	}
+
+	@Override
+	public boolean canAct(Skill skill) {
+		if (!(skill.getEffector() instanceof Player player))
+			return true;
+		int currentDp = player.getCommonData().getDp();
+		if (currentDp > 0 && currentDp >= value)
+			return true;
+		PacketSendUtility.sendPacket(player, SM_SYSTEM_MESSAGE.STR_SKILL_NOT_ENOUGH_DP());
+		return false;
 	}
 }

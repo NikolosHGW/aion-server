@@ -1,13 +1,13 @@
 package com.aionemu.gameserver.model.templates.item;
 
-import javax.xml.bind.annotation.XmlAttribute;
-import javax.xml.bind.annotation.XmlType;
+import jakarta.xml.bind.annotation.XmlAttribute;
+import jakarta.xml.bind.annotation.XmlType;
 
 /**
  * @author ginho1
  */
 @XmlType(name = "ReturnLocList")
-public class ReturnLocList extends ResultedItemsCollection {
+public class ReturnLocList {
 
 	@XmlAttribute(name = "index")
 	protected int index;

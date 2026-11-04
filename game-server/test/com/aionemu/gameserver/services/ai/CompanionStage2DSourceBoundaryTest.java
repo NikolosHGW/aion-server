@@ -15,7 +15,7 @@ class CompanionStage2DSourceBoundaryTest {
 
 	@Test
 	void executionFlagsAreDefaultOffWithEmptyAllowlistAndSafePolling() throws IOException {
-		String config = Files.readString(Path.of("config/main/ai.properties"));
+		String config = Files.readString(Path.of("config/main/ai.properties")).replace("\r\n", "\n");
 		assertTrue(config.contains("ai.companions.quest_execution.enabled = false"));
 		assertTrue(config.contains("ai.companions.quest_execution.combat_enabled = false"));
 		assertTrue(config.contains("ai.companions.quest_execution.allowed_quest_ids =\n"));

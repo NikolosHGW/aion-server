@@ -1,5 +1,7 @@
 package com.aionemu.gameserver.services.item;
 
+import static com.aionemu.gameserver.model.items.ItemUseAnimation.*;
+
 import com.aionemu.commons.utils.Rnd;
 import com.aionemu.gameserver.controllers.observer.ItemUseObserver;
 import com.aionemu.gameserver.model.TaskId;
@@ -21,26 +23,31 @@ import com.aionemu.gameserver.utils.audit.AuditLogger;
 public class ItemActionService {
 
 	public static void identifyItem(Player player, Item item) {
+		// A second identify cancels the task of the first one, and that task is the only place that removes its observer.
+		if (player.getController().hasTask(TaskId.ITEM_USE))
+			return;
 		int itemId = item.getItemId();
-		PacketSendUtility.broadcastPacket(player, new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), item.getObjectId(), itemId, 5000, 9, 0), true);
-		final ItemUseObserver observer = new ItemUseObserver() {
+		PacketSendUtility.broadcastPacket(player, new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), item.getObjectId(), itemId, 5000, IDENTIFY_START),
+			true);
+		ItemUseObserver observer = new ItemUseObserver(player) {
 
 			@Override
-			public void abort() {
+			protected void onAbort() {
 				player.getController().cancelTask(TaskId.ITEM_USE);
 				PacketSendUtility.sendPacket(player, SM_SYSTEM_MESSAGE.STR_MSG_ITEM_IDENTIFY_CANCELED(item.getL10n()));
-				PacketSendUtility.broadcastPacket(player, new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), item.getObjectId(), itemId, 0, 11, 0), true);
-				player.getObserveController().removeObserver(this);
+				PacketSendUtility.broadcastPacket(player, new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), item.getObjectId(), itemId, 0, IDENTIFY_CANCEL),
+					true);
 			}
 
 		};
-		player.getObserveController().attach(observer);
+		player.getObserveController().addObserver(observer);
 		player.getController().addTask(TaskId.ITEM_USE, ThreadPoolManager.getInstance().schedule(new Runnable() {
 
 			@Override
 			public void run() {
 				player.getObserveController().removeObserver(observer);
-				PacketSendUtility.broadcastPacket(player, new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), item.getObjectId(), itemId, 0, 10, 0), true);
+				PacketSendUtility.broadcastPacket(player, new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), item.getObjectId(), itemId, 0, IDENTIFY_SUCCESS),
+					true);
 				item.setOptionalSockets(Rnd.get(0, item.getItemTemplate().getOptionSlotBonus()));
 				item.setBonusStats(TuningAction.getRandomStatBonusIdFor(item), true);
 				item.setEnchantBonus(Rnd.get(0, item.getItemTemplate().getMaxEnchantBonus()));

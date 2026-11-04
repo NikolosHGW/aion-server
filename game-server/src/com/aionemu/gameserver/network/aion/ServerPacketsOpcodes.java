@@ -84,11 +84,11 @@ public class ServerPacketsOpcodes {
 		addPacketOpcode(66, SM_GM_SHOW_LEGION_MEMBERLIST.class); // [S_GUILD_OTHER_MEMBER_INFO]
 		addPacketOpcode(67, SM_WEATHER.class); // [S_WEATHER]
 		addPacketOpcode(68, SM_PLAYER_STATE.class); // [S_INVISIBLE_LEVEL]
-		// addPacketOpcode(69, ); // [S_RECALLED_BY_OTHER] SM_SUMMON_TELEPORT_REQUEST some teleport/summon dialog. response when accepting/declining the dialog is CM_SUMMON_TELEPORT_RESPONSE (opcode 195). first D in SM and CM packets is identical (dialog ID?) //fsc 69 cshh unk name skill_id time_seconds
+		addPacketOpcode(69, SM_RECALLED_BY_OTHER.class); // [S_RECALLED_BY_OTHER]
 		addPacketOpcode(70, SM_ACTION_ANIMATION.class); // [S_EFFECT]
 		addPacketOpcode(71, SM_QUEST_LIST.class); // [S_LOAD_WORKINGQUEST]
 		addPacketOpcode(72, SM_KEY.class); // [S_KEY]
-		addPacketOpcode(73, SM_SUMMON_PANEL_REMOVE.class); // [S_RESET_SKILL_COOLING_TIME]
+		addPacketOpcode(73, SM_RESET_SKILL_COOLDOWN.class); // [S_RESET_SKILL_COOLING_TIME]
 		addPacketOpcode(74, SM_EXCHANGE_REQUEST.class); // [S_XCHG_START]
 		addPacketOpcode(75, SM_EXCHANGE_ADD_ITEM.class); // [S_ADD_XCHG]
 		// addPacketOpcode(76, ); // [S_REMOVE_XCHG]
@@ -269,7 +269,7 @@ public class ServerPacketsOpcodes {
 		// addPacketOpcode(251, ); // [S_CHAR_BM_PACK_LIST] first c or h must be size or type since nonzero leads to a client crash, because of incorrect following data
 		addPacketOpcode(252, SM_PRICES.class); // [S_TAX_INFO]
 		addPacketOpcode(253, SM_TRADELIST.class); // [S_STORE_SALE_INFO]
-		// addPacketOpcode(254, ); // [S_INVINCIBLE_TIME]
+		addPacketOpcode(254, SM_INVINCIBLE_TIME.class);
 		addPacketOpcode(255, SM_RECONNECT_KEY.class); // [S_RECONNECT_KEY]
 		addPacketOpcode(256, SM_HOUSE_BIDS.class); // [S_AUCTION_LIST]
 		// addPacketOpcode(257, ); // [S_AUCTION_REGISTER] TODO: Format: d "Unknown Error d"
@@ -299,9 +299,9 @@ public class ServerPacketsOpcodes {
 		// addPacketOpcode(281, ); // [S_MGSERVER_CONNECT_INFO]
 		// addPacketOpcode(282, ); // [S_USER_EXPERIENCE_LV] shows buff icon + symbols next to players name //fsc 282 dd playerObjId iconId (2 = Reward for new user, 3 = reward for returning user, 10 benefits for special user)
 		// addPacketOpcode(283, SM_DISPUTE_LAND.class); // [S_SPVP_STATUS]
-		addPacketOpcode(284, SM_FIRST_SHOW_DECOMPOSABLE.class); // [S_DISASSEMBLY_ITEMLIST]
+		addPacketOpcode(284, SM_SHOW_DECOMPOSABLE.class); // [S_DISASSEMBLY_ITEMLIST]
 		addPacketOpcode(285, SM_MEGAPHONE.class); // [S_MEGAPHONE]
-		addPacketOpcode(286, SM_SECONDARY_SHOW_DECOMPOSABLE.class); // [S_SELECT_DISASSEMBLY_ITEM_RESULT]
+		addPacketOpcode(286, SM_SELECT_DECOMPOSABLE_RESULT.class); // [S_SELECT_DISASSEMBLY_ITEM_RESULT]
 		// addPacketOpcode(287, ); // [S_RUN_EVENT_MC_MACRO]
 		addPacketOpcode(288, SM_TUNE_RESULT.class); // [S_REIDENTIFY_PREVIEW]
 		addPacketOpcode(289, SM_UNWRAP_ITEM.class); // [S_UNPACK_ITEM]

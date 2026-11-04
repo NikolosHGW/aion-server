@@ -31,7 +31,7 @@ public class ChatProcessor implements GameEngine {
 		ScriptManager scriptManager = new ScriptManager();
 		scriptManager.setGlobalClassListener(new ChatCommandsLoader(this));
 		scriptManager.load(CommandsConfig.HANDLER_DIRECTORIES);
-		log.info("Loaded " + commandHandlers.size() + " commands.");
+		log.info("Loaded {} commands", commandHandlers.size());
 	}
 
 	public void reload() {
@@ -48,52 +48,38 @@ public class ChatProcessor implements GameEngine {
 	}
 
 	public void registerCommand(ChatCommand cmd) {
+		String cmdName = cmd.getAliasWithPrefix();
 		if (cmd.getLevel() < 0)
-			throw new NullPointerException("Failed to register chat command: Invalid access level for " + cmd.getAlias() + ".");
-		if (commandHandlers.putIfAbsent(cmd.getAlias().toLowerCase(), cmd) != null)
-			throw new IllegalArgumentException("Failed to register chat command: " + cmd.getAlias() + " is already registered.");
+			throw new IllegalArgumentException("Failed to register " + cmd.getClass().getSimpleName() + ": Invalid access level for " + cmdName + ".");
+		if (commandHandlers.putIfAbsent(cmdName.toLowerCase(), cmd) != null)
+			throw new IllegalArgumentException("Failed to register " + cmd.getClass().getSimpleName() + ": " + cmdName + " is already registered.");
 	}
 
 	public boolean handleChatCommand(Player player, String text) {
 		if (text == null || text.isEmpty())
 			return false;
-
-		String prefix;
-		if (text.startsWith(AdminCommand.PREFIX))
-			prefix = AdminCommand.PREFIX;
-		else if (text.startsWith(PlayerCommand.PREFIX))
-			prefix = PlayerCommand.PREFIX;
-		else
+		if (!text.startsWith(AdminCommand.PREFIX) && !text.startsWith(PlayerCommand.PREFIX))
 			return false;
 		int splitIndex = text.indexOf(' ');
-		String cmdName = text.substring(prefix.length(), splitIndex == -1 ? text.length() : splitIndex);
+		String cmdName = splitIndex == -1 ? text : text.substring(0, splitIndex);
 		ChatCommand cmd = getCommand(cmdName);
 		if (cmd == null)
 			return false;
-		String cmdParams = splitIndex == -1 ? "" : text.substring(splitIndex);
+		String cmdParams = text.substring(cmdName.length());
 		return cmd.process(player, getParamsFromString(cmdParams));
 	}
 
 	public void handleConsoleCommand(Player player, String text) {
 		if (text == null || text.isEmpty())
 			return;
-
-		if (!text.startsWith(ConsoleCommand.PREFIX))
-			return;
-
-		String cmdName = text.split(" ")[0];
-		String cmdParams = text.substring(cmdName.length());
-
-		// TODO remove this temporary fix (AdminCommand is already called addskill)
-		if (cmdName.endsWith("addskill"))
-			cmdName = cmdName.replace("addskill", "addcskill");
-
-		ChatCommand cmd = getCommand(cmdName.substring(ConsoleCommand.PREFIX.length()));
-
-		if (cmd == null)
+		int splitIndex = text.indexOf(' ');
+		String cmdName = splitIndex == -1 ? text : text.substring(0, splitIndex);
+		if (!(getCommand(cmdName) instanceof ConsoleCommand consoleCommand)) {
 			PacketSendUtility.sendMessage(player, "The command " + cmdName + " is not implemented.");
-		else if (cmd instanceof ConsoleCommand)
-			cmd.process(player, getParamsFromString(cmdParams));
+			return;
+		}
+		String cmdParams = text.substring(cmdName.length());
+		consoleCommand.process(player, getParamsFromString(cmdParams));
 	}
 
 	private String[] getParamsFromString(String params) {
@@ -104,8 +90,18 @@ public class ChatProcessor implements GameEngine {
 		return params.trim().split(" +(?=[^\\]]*(\\[|$))");
 	}
 
+	/**
+	 * Command keys are registered with their prefix ({@code //} for admin, {@code .} for player commands, none for console), while
+	 * configs and stored accesses use the bare alias, so an alias without prefix also resolves to its command.
+	 */
 	private ChatCommand getCommand(String alias) {
-		return commandHandlers.get(alias.toLowerCase());
+		ChatCommand command = commandHandlers.get(alias.toLowerCase());
+		if (command != null)
+			return command;
+		for (ChatCommand candidate : commandHandlers.values())
+			if (candidate.getAlias().equalsIgnoreCase(alias))
+				return candidate;
+		return null;
 	}
 
 	/**
@@ -130,8 +126,11 @@ public class ChatProcessor implements GameEngine {
 		return command != null && command.validateAccess(executor);
 	}
 
+	/**
+	 * @return true if a command with this alias exists, with or without its prefix
+	 */
 	public boolean isCommandExists(String alias) {
-		return commandHandlers.containsKey(alias.toLowerCase());
+		return getCommand(alias) != null;
 	}
 
 	public static ChatProcessor getInstance() {

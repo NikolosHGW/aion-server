@@ -15,9 +15,7 @@ import com.aionemu.gameserver.dao.BlockListDAO;
 import com.aionemu.gameserver.dao.InventoryDAO;
 import com.aionemu.gameserver.dao.ItemStoneListDAO;
 import com.aionemu.gameserver.dao.MailDAO;
-import com.aionemu.gameserver.model.gameobjects.Item;
-import com.aionemu.gameserver.model.gameobjects.Letter;
-import com.aionemu.gameserver.model.gameobjects.LetterType;
+import com.aionemu.gameserver.model.gameobjects.*;
 import com.aionemu.gameserver.model.gameobjects.Persistable.PersistentState;
 import com.aionemu.gameserver.model.gameobjects.player.BlockList;
 import com.aionemu.gameserver.model.gameobjects.player.Mailbox;
@@ -37,6 +35,7 @@ import com.aionemu.gameserver.services.player.PlayerService;
 import com.aionemu.gameserver.services.trade.PricesService;
 import com.aionemu.gameserver.taskmanager.tasks.ExpireTimerTask;
 import com.aionemu.gameserver.utils.PacketSendUtility;
+import com.aionemu.gameserver.utils.PositionUtil;
 import com.aionemu.gameserver.utils.audit.AuditLogger;
 import com.aionemu.gameserver.utils.collections.DynamicServerPacketBodySplitList;
 import com.aionemu.gameserver.utils.collections.SplitList;
@@ -55,7 +54,7 @@ public class MailService {
 
 	public static void sendMail(Player sender, String recipientName, String title, String message, int attachedItemObjId, long attachedItemCount,
 		long attachedKinah, LetterType letterType) {
-		if (sender.isTrading() || recipientName.length() > 16)
+		if (sender.isTrading() || recipientName.length() > 16 || !isAtMailbox(sender))
 			return;
 		if (letterType == LetterType.BLACKCLOUD || attachedKinah < 0) {
 			AuditLogger.log(sender, "tried to send letter of type " + letterType + " with " + attachedKinah + " Kinah");
@@ -102,6 +101,10 @@ public class MailService {
 			itemMailCommission = (long) (senderItem.getItemTemplate().getPrice() * getQualityPriceRate(senderItem) * attachedItemCount * costFactor);
 		}
 
+		if (attachedKinah > senderInventory.getKinah()) {
+			PacketSendUtility.sendPacket(sender, SM_SYSTEM_MESSAGE.STR_NOT_ENOUGH_MONEY());
+			return;
+		}
 		if (attachedKinah > 0)
 			kinahMailCommission = (long) (attachedKinah * 0.01f * costFactor);
 
@@ -117,8 +120,10 @@ public class MailService {
 			// Check Mailing untradables with Cash items (Special courier passes)
 			if (senderItem.getPackCount() <= 0 && !senderItem.isTradeable()) {
 				Disposition dispo = senderItem.getItemTemplate().getDisposition();
-				if (dispo == null || dispo.getId() == 0 || dispo.getCount() == 0) // can not be traded, hack
+				if (dispo == null || dispo.getId() == 0 || dispo.getCount() == 0) {
+					PacketSendUtility.sendPacket(sender, SM_SYSTEM_MESSAGE.STR_MAIL_SEND_ITEM_CAN_NOT_BE_EXCHANGED());
 					return;
+				}
 
 				if (senderInventory.getItemCountByItemId(dispo.getId()) >= dispo.getCount()) {
 					senderInventory.decreaseByItemId(dispo.getId(), dispo.getCount());
@@ -133,6 +138,7 @@ public class MailService {
 				attachedItem = senderItem;
 			} else if (senderItem.getItemCount() > attachedItemCount) {
 				attachedItem = ItemFactory.newItem(senderItem.getItemTemplate().getTemplateId(), attachedItemCount);
+				attachedItem.setExpireTime(senderItem.getExpireTime());
 				senderInventory.decreaseItemCount(senderItem, attachedItemCount);
 			}
 
@@ -162,8 +168,8 @@ public class MailService {
 			return;
 
 		if (attachedItem != null && LoggingConfig.LOG_MAIL)
-			log.info("Player: " + sender.getName() + " sent item " + attachedItem.getItemId() + " [" + attachedItem.getItemName() + "] (count: "
-				+ attachedItem.getItemCount() + ") to player " + recipientName);
+			log.info("Player: {} sent item {} [{}] (count: {}) to player {}", sender.getName(), attachedItem.getItemId(), attachedItem.getItemName(),
+				attachedItem.getItemCount(), recipientName);
 
 		PacketSendUtility.sendPacket(sender, new SM_MAIL_SERVICE(status));
 		SystemMailService.updateRecipientMailbox(recipientCommonData, newLetter);
@@ -202,9 +208,11 @@ public class MailService {
 	 * Read letter with specified letter id
 	 */
 	public static void readMail(Player player, int letterId) {
+		if (!isAtMailbox(player))
+			return;
 		Letter letter = player.getMailbox().getLetterFromMailbox(letterId);
 		if (letter == null) {
-			log.warn("Cannot read mail " + player.getObjectId() + " " + letterId);
+			log.warn("Cannot read mail {} {}", player.getObjectId(), letterId);
 			return;
 		}
 
@@ -213,6 +221,8 @@ public class MailService {
 	}
 
 	public static void getAttachments(Player player, int letterId, byte attachmentType) {
+		if (!isAtMailbox(player))
+			return;
 		Letter letter = player.getMailbox().getLetterFromMailbox(letterId);
 
 		if (letter == null)
@@ -254,12 +264,31 @@ public class MailService {
 	}
 
 	public static void deleteMail(Player player, int[] mailObjId) {
+		if (!isAtMailbox(player))
+			return;
 		Mailbox mailbox = player.getMailbox();
 		for (int letterId : mailObjId) {
-			mailbox.removeLetter(letterId);
+			if (!mailbox.removeLetter(letterId)) {
+				AuditLogger.log(player, "tried to delete letter " + letterId + " which is not in their mailbox");
+				return;
+			}
 			MailDAO.deleteLetter(letterId);
 		}
 		PacketSendUtility.sendPacket(player, new SM_MAIL_SERVICE(mailObjId));
+	}
+
+	/**
+	 * @return True if the player opened the mailbox at a postbox or postman and is still next to it.
+	 */
+	private static boolean isAtMailbox(Player player) {
+		boolean isNear = switch (player.getStorageManager(StorageType.MAILBOX)) {
+			case Npc npc -> PositionUtil.isInTalkRange(player, npc);
+			case HouseObject<?> houseObject -> PositionUtil.isInTalkRange(player, houseObject);
+			case null, default -> false;
+		};
+		if (!isNear)
+			PacketSendUtility.sendPacket(player, SM_SYSTEM_MESSAGE.STR_MAIL_CLICK_POSTBOX_TO_USE());
+		return isNear;
 	}
 
 	public static void onPlayerLogin(Player player) {

@@ -27,6 +27,8 @@ import com.aionemu.gameserver.world.World;
  */
 public class PlayerCommonData extends CreatureTemplate {
 
+	public static final int MAX_NOTE_LENGTH = 64;
+
 	private final int playerObjId;
 	private Race race;
 	private String name;
@@ -55,13 +57,12 @@ public class PlayerCommonData extends CreatureTemplate {
 	private boolean noExp = false;
 	private long reposeCurrent;
 	private long reposeMax;
+	private long pvpExp;
 	private long salvationPoint;
 	private int mentorFlagTime;
 	private int worldOwnerId;
 	private boolean isDaeva;
 	private boolean isInEditMode;
-
-	private BoundRadius boundRadius;
 
 	private long lastTransferTime;
 
@@ -268,6 +269,17 @@ public class PlayerCommonData extends CreatureTemplate {
 	}
 
 	/**
+	 * @return The accumulated PvP XP that limits how much more PvP XP the player can gain.
+	 */
+	public long getPvpExp() {
+		return pvpExp;
+	}
+
+	public void setPvpExp(long pvpExp) {
+		this.pvpExp = pvpExp;
+	}
+
+	/**
 	 * sets the exp and level value
 	 */
 	public void setExp(long exp) {
@@ -390,6 +402,13 @@ public class PlayerCommonData extends CreatureTemplate {
 		this.heading = heading;
 	}
 
+	public void setXYZH(float x, float y, float z, byte heading) {
+		this.x = x;
+		this.y = y;
+		this.z = z;
+		this.heading = heading;
+	}
+
 	/**
 	 * @return Timestamp the player was last online. May be null
 	 */
@@ -424,7 +443,8 @@ public class PlayerCommonData extends CreatureTemplate {
 	}
 
 	public void setNote(String note) {
-		this.note = note;
+		// The note is inlined into SM_PLAYER_INFO and other packets, which the client reads only up to 8192 bytes.
+		this.note = note == null || note.length() <= MAX_NOTE_LENGTH ? note : note.substring(0, MAX_NOTE_LENGTH);
 	}
 
 	public int getTitleId() {
@@ -512,13 +532,9 @@ public class PlayerCommonData extends CreatureTemplate {
 		return mailboxLetters;
 	}
 
-	public void setBoundingRadius(BoundRadius boundRadius) {
-		this.boundRadius = boundRadius;
-	}
-
 	@Override
 	public BoundRadius getBoundRadius() {
-		return boundRadius;
+		return BoundRadius.PLAYER;
 	}
 
 	public void setDeathCount(int count) {

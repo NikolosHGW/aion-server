@@ -28,7 +28,7 @@ public final class DefaultCompanionPlayerCreationGateway implements CompanionPla
 		commonData.setPlayerClass(PlayerClass.valueOf(CompanionCreationPolicy.STARTING_CLASS));
 		commonData.setLevel(1);
 		PlayerAppearance appearance = new PlayerAppearance();
-		appearance.setHeight(1.0f);
+		appearance.setHeightScale(1.0f);
 		PlayerAccountData accountData = new PlayerAccountData(commonData, appearance);
 		Player player = PlayerService.newPlayer(accountData, hostAccount);
 		if (!PlayerService.storeNewPlayer(player, hostAccountName, hostAccountId))

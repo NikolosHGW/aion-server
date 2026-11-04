@@ -1,9 +1,9 @@
 package com.aionemu.gameserver.model.templates.item.actions;
 
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
-import javax.xml.bind.annotation.XmlAttribute;
-import javax.xml.bind.annotation.XmlType;
+import jakarta.xml.bind.annotation.XmlAccessType;
+import jakarta.xml.bind.annotation.XmlAccessorType;
+import jakarta.xml.bind.annotation.XmlAttribute;
+import jakarta.xml.bind.annotation.XmlType;
 
 import com.aionemu.gameserver.model.gameobjects.Item;
 import com.aionemu.gameserver.model.gameobjects.player.Player;
@@ -44,6 +44,7 @@ public class TitleAddAction extends AbstractItemAction {
 			new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), parentItem.getObjectId(), itemTemplate.getTemplateId()), true);
 
 		if (player.getTitleList().addTitle(titleid, false, minutes == null ? 0 : ((int) (System.currentTimeMillis() / 1000)) + minutes * 60)) {
+			PacketSendUtility.sendPacket(player, SM_SYSTEM_MESSAGE.STR_USE_ITEM(parentItem.getL10n()));
 			Item item = player.getInventory().getItemByObjId(parentItem.getObjectId());
 			player.getInventory().delete(item);
 		}

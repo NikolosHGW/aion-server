@@ -1,6 +1,7 @@
 package com.aionemu.gameserver.questEngine.handlers;
 
 import static com.aionemu.gameserver.model.DialogAction.*;
+import static com.aionemu.gameserver.model.items.ItemUseAnimation.*;
 
 import java.util.Collections;
 import java.util.HashSet;
@@ -41,7 +42,7 @@ import com.aionemu.gameserver.utils.ThreadPoolManager;
 import com.aionemu.gameserver.world.WorldMapInstance;
 import com.aionemu.gameserver.world.WorldPosition;
 import com.aionemu.gameserver.world.geo.GeoService;
-import com.aionemu.gameserver.world.zone.ZoneName;
+import com.aionemu.gameserver.world.zone.ZoneInstance;
 
 /**
  * @author MrPoke, vlog, Majka
@@ -120,11 +121,11 @@ public abstract class AbstractQuestHandler {
 		return false;
 	}
 
-	public boolean onEnterZoneEvent(QuestEnv env, ZoneName zoneName) {
+	public boolean onEnterZoneEvent(QuestEnv env, ZoneInstance zone) {
 		return false;
 	}
 
-	public boolean onLeaveZoneEvent(QuestEnv env, ZoneName zoneName) {
+	public boolean onLeaveZoneEvent(QuestEnv env, ZoneInstance zone) {
 		return false;
 	}
 
@@ -209,7 +210,7 @@ public abstract class AbstractQuestHandler {
 		return false;
 	}
 
-	public boolean onKillInZoneEvent(QuestEnv env) {
+	public boolean onKillInZoneEvent(QuestEnv env, ZoneInstance zone) {
 		return false;
 	}
 
@@ -263,6 +264,13 @@ public abstract class AbstractQuestHandler {
 	}
 
 	public boolean onEnterWindStreamEvent(QuestEnv env, int worldId) {
+		return false;
+	}
+
+	/**
+	 * Called when the player lands at the end of a flight transporter path.
+	 */
+	public boolean onFlightPathEndEvent(QuestEnv env, int teleportId) {
 		return false;
 	}
 
@@ -952,12 +960,13 @@ public abstract class AbstractQuestHandler {
 		final int objectId = item.getObjectId();
 
 		if (qs.getQuestVarById(varNum) == step) {
-			PacketSendUtility.broadcastPacket(player, new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), objectId, itemId, 3000, 0, 0), true);
+			int useDelay = player.getItemUseDelay(3000);
+			PacketSendUtility.broadcastPacket(player, new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), objectId, itemId, useDelay, USE_START), true);
 			ThreadPoolManager.getInstance().schedule(new Runnable() {
 
 				@Override
 				public void run() {
-					PacketSendUtility.broadcastPacket(player, new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), objectId, itemId, 0, 1, 0), true);
+					PacketSendUtility.broadcastPacket(player, new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), objectId, itemId, 0, USE_SUCCESS), true);
 					removeQuestItem(env, itemId, 1);
 
 					if (addItemId != 0 && addItemCount != 0) {
@@ -970,7 +979,7 @@ public abstract class AbstractQuestHandler {
 					}
 					changeQuestStep(env, step, nextStep, reward, varNum);
 				}
-			}, 3000);
+			}, useDelay);
 			return true;
 		}
 		return false;
@@ -1127,22 +1136,6 @@ public abstract class AbstractQuestHandler {
 				for (XMLStartCondition cond : template.getXMLStartConditions())
 					if (hasAnyPreQuestFinished(qsl, cond))
 						return true;
-			}
-		}
-		return false;
-	}
-
-	/** Start a mission on enter the questZone */
-	public boolean defaultOnEnterZoneEvent(QuestEnv env, ZoneName currentZoneName, ZoneName questZoneName) {
-		if (questZoneName == currentZoneName) {
-			Player player = env.getPlayer();
-			if (player == null)
-				return false;
-			QuestState qs = player.getQuestStateList().getQuestState(questId);
-			if (qs == null) {
-				env.setQuestId(questId);
-				if (QuestService.startQuest(env))
-					return true;
 			}
 		}
 		return false;

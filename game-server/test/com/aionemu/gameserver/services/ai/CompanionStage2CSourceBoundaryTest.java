@@ -49,7 +49,7 @@ class CompanionStage2CSourceBoundaryTest {
 		assertTrue(heading >= 0 && heading < presentation && presentation < attack);
 		assertTrue(playerController.contains("super.attackTarget(target, time, true)"));
 		assertEquals(1, count(creatureController, "new SM_ATTACK("));
-		assertEquals(1, count(creatureController, "target.getController().onAttack(getOwner(), damage, firstAttackStatus, criticalEffect)"));
+		assertEquals(1, count(creatureController, "target.getController().onAttack(getOwner(), damage, firstAttackStatus, criticalProcEffect)"));
 		assertTrue(creatureController.contains("if (time == 0)"));
 	}
 

@@ -140,7 +140,7 @@ public class AggroList {
 				masterAggroInfo = new AggroInfo(master);
 				masterAggroInfo.setHate(1);
 			}
-			masterAggroInfo.addDamage(aggroInfo.getDamage());
+			masterAggroInfo.addDamage(aggroInfo.getDamage(), aggroInfo.getFirstDamageTime());
 			return masterAggroInfo;
 		});
 		if (personalCompanion)

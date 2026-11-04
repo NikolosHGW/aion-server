@@ -33,6 +33,12 @@ public class CustomConfig {
 	public static int LEVEL_TO_WHISPER;
 
 	/**
+	 * Maximum number of macros per character
+	 */
+	@Property(key = "gameserver.macros.limit", defaultValue = "12")
+	public static int MACROS_LIMIT;
+
+	/**
 	 * Time in days after which an item in broker will be unregistered (client cannot display more than 255 days)
 	 */
 	@Property(key = "gameserver.broker.registration_expiration_days", defaultValue = "8")
@@ -242,6 +248,12 @@ public class CustomConfig {
 	 */
 	@Property(key = "gameserver.items.ignore_potions_at_full_health", defaultValue = "false")
 	public static boolean IGNORE_POTIONS_AT_FULL_HEALTH;
+
+	/**
+	 * Cancel a running item use when the player selects another target, as the retail server does
+	 */
+	@Property(key = "gameserver.items.cancel_use_on_target_change", defaultValue = "true")
+	public static boolean CANCEL_ITEM_USE_ON_TARGET_CHANGE;
 
 	/**
 	 * Custom Reward Packages

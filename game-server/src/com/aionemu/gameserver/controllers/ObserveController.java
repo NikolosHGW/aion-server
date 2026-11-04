@@ -16,6 +16,7 @@ import com.aionemu.gameserver.skillengine.effect.AbnormalState;
 import com.aionemu.gameserver.skillengine.model.Effect;
 import com.aionemu.gameserver.skillengine.model.ShieldType;
 import com.aionemu.gameserver.skillengine.model.Skill;
+import com.aionemu.gameserver.skillengine.model.SkillType;
 
 /**
  * @author ATracer, Cura
@@ -24,6 +25,7 @@ public class ObserveController {
 
 	private final List<ActionObserver> observers = new ArrayList<>();
 	private final List<AttackCalcObserver> attackCalcObservers = new CopyOnWriteArrayList<>();
+	private volatile OneTimeBoostSkillAttack oneTimeBoostSkillAttack;
 
 	/**
 	 * Adds the observer for a single notification. It will be automatically removed from this controller after receiving the notification.
@@ -63,7 +65,7 @@ public class ObserveController {
 				return;
 			for (Iterator<ActionObserver> iterator = observers.iterator(); iterator.hasNext(); ) {
 				ActionObserver observer = iterator.next();
-				if (observer.getObserverType().matchesObserver(type)) {
+				if (observer.matches(type)) {
 					if (notifiable.isEmpty())
 						notifiable = new ArrayList<>();
 					notifiable.add(observer);
@@ -175,6 +177,28 @@ public class ObserveController {
 		notifyObservers(ObserverType.UNEQUIP, item, owner);
 	}
 
+	/**
+	 * Aborts every attached {@link ItemUseObserver}, so each of them cancels its own item use and tells the player about it.
+	 */
+	public void abortItemUseObservers() {
+		List<ItemUseObserver> itemUseObservers = Collections.emptyList();
+		synchronized (observers) {
+			for (Iterator<ActionObserver> iterator = observers.iterator(); iterator.hasNext();) {
+				if (iterator.next() instanceof ItemUseObserver itemUseObserver) {
+					if (itemUseObservers.isEmpty())
+						itemUseObservers = new ArrayList<>();
+					itemUseObservers.add(itemUseObserver);
+					iterator.remove();
+				}
+			}
+		}
+
+		for (ItemUseObserver itemUseObserver : itemUseObservers) {
+			itemUseObserver.abort();
+			itemUseObserver.onRemoved();
+		}
+	}
+
 	public void notifyItemuseObservers(Item item) {
 		notifyObservers(ObserverType.ITEMUSE, item);
 	}
@@ -238,24 +262,19 @@ public class ObserveController {
 		}
 	}
 
-	public float getBasePhysicalDamageMultiplier(boolean isSkill) {
-		float multiplier = 1;
-		if (attackCalcObservers.size() > 0) {
-			for (AttackCalcObserver observer : attackCalcObservers) {
-				multiplier *= observer.getBasePhysicalDamageMultiplier(isSkill);
-			}
-		}
-		return multiplier;
+	public void setOneTimeBoostSkillAttack(OneTimeBoostSkillAttack boost) {
+		oneTimeBoostSkillAttack = boost;
 	}
 
-	public float getBaseMagicalDamageMultiplier() {
-		float multiplier = 1;
-		if (attackCalcObservers.size() > 0) {
-			for (AttackCalcObserver observer : attackCalcObservers) {
-				multiplier *= observer.getBaseMagicalDamageMultiplier();
-			}
-		}
-		return multiplier;
+	public void removeOneTimeBoostSkillAttack(Effect effect) {
+		OneTimeBoostSkillAttack boost = oneTimeBoostSkillAttack;
+		if (boost != null && boost.getEffect() == effect)
+			oneTimeBoostSkillAttack = null;
+	}
+
+	public OneTimeBoostSkillAttack getOneTimeBoostSkillAttack(SkillType attackType) {
+		OneTimeBoostSkillAttack boost = oneTimeBoostSkillAttack;
+		return boost != null && boost.applies(attackType) ? boost : null;
 	}
 
 	public void clear() {
@@ -266,5 +285,6 @@ public class ObserveController {
 		}
 		removed.forEach(ActionObserver::onRemoved);
 		attackCalcObservers.clear();
+		oneTimeBoostSkillAttack = null;
 	}
 }

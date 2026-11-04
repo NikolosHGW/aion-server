@@ -166,7 +166,7 @@ public final class QuestGoalCandidateProvider {
 			StringBuilder summary = new StringBuilder("group ").append(i).append(": kinah=").append(reward.getKinah()).append(", exp=")
 				.append(reward.getExp()).append(", ap=").append(reward.getAp()).append(", gp=").append(reward.getGp());
 			for (QuestItems item : reward.getRewardItem())
-				summary.append(", item=").append(ChatUtil.itemName(item.getItemId())).append('x').append(item.getCount());
+				summary.append(", item=").append(ChatUtil.itemName(item.getItemId(), "")).append('x').append(item.getCount());
 			if (!reward.getSelectableRewardItem().isEmpty())
 				summary.append(", selectableItems=").append(reward.getSelectableRewardItem().size());
 			summaries.add(summary.toString());

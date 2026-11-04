@@ -5,7 +5,9 @@ import java.util.List;
 import java.util.function.Function;
 
 import com.aionemu.gameserver.instance.handlers.InstanceHandler;
+import com.aionemu.gameserver.world.zone.RegionZone;
 import com.aionemu.gameserver.world.zone.ZoneInstance;
+import com.aionemu.gameserver.world.zone.ZoneService;
 
 /**
  * @author ATracer
@@ -18,12 +20,16 @@ public class WorldMap3DInstance extends WorldMapInstance {
 
 	@Override
 	public MapRegion getRegion(float x, float y, float z) {
+		x = Math.clamp(x, 0, getParent().getWorldSize());
+		y = Math.clamp(y, 0, getParent().getWorldSize());
+		z = Math.clamp(z, 0, getParent().getWorldSize());
 		int regionId = RegionUtil.get3dRegionId(x, y, z);
 		return regions.get(regionId);
 	}
 
 	@Override
 	protected void initMapRegions() {
+		List<ZoneInstance> zoneInstances = ZoneService.getInstance().createZoneInstances(getMapId());
 		int size = getParent().getWorldSize();
 		float maxZ = Math.round((float) size / regionSize) * regionSize;
 
@@ -36,7 +42,7 @@ public class WorldMap3DInstance extends WorldMapInstance {
 			}
 		}
 		regionIds.parallelStream().forEach(regionId -> {
-			MapRegion mapRegion = createMapRegion(regionId);
+			MapRegion mapRegion = createMapRegion(regionId, zoneInstances);
 			synchronized (regions) {
 					regions.put(regionId, mapRegion);
 			}
@@ -65,13 +71,11 @@ public class WorldMap3DInstance extends WorldMapInstance {
 		}
 	}
 
-	@Override
-	protected MapRegion createMapRegion(int regionId) {
+	private MapRegion createMapRegion(int regionId, List<ZoneInstance> zoneInstances) {
 		float startX = RegionUtil.getXFrom3dRegionId(regionId);
 		float startY = RegionUtil.getYFrom3dRegionId(regionId);
 		float startZ = RegionUtil.getZFrom3dRegionId(regionId);
-		ZoneInstance[] zones = filterZones(this.getMapId(), regionId, startX, startY, startZ, startZ + regionSize);
-		return new MapRegion(regionId, this, zones);
+		return createMapRegion(regionId, zoneInstances, new RegionZone(startX, startY, startZ, startZ + regionSize));
 	}
 
 	@Override

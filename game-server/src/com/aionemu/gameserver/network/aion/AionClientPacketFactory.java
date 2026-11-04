@@ -183,7 +183,7 @@ public class AionClientPacketFactory {
 			packets[155] = new PacketInfo<>(CM_LOOT_ITEM.class, State.IN_GAME); // [C_LOOT_ITEM (&LAB_140630080)]
 			packets[156] = new PacketInfo<>(CM_MOVE_ITEM.class, State.IN_GAME); // [C_MOVE_ITEM_TO_ANOTHER_SLOT (&LAB_140630410)]
 			packets[157] = new PacketInfo<>(CM_SPLIT_ITEM.class, State.IN_GAME); // [C_MOVE_STACKABLE_ITEM (MoveStackableItemPacket)]
-			packets[158] = new PacketInfo<>(CM_SHOW_BLOCKLIST.class, State.IN_GAME); // [C_RECIPE_LIST (RecipeListPacket)]
+			packets[158] = new PacketInfo<>(CM_RECIPE_LIST.class, State.IN_GAME); // [C_RECIPE_LIST (RecipeListPacket)]
 			packets[159] = new PacketInfo<>(CM_PLAYER_SEARCH.class, State.IN_GAME); // [C_SEARCH_USERS (SearchUserPacket)]
 			packets[160] = new PacketInfo<>(CM_LEGION_UPLOAD_INFO.class, State.IN_GAME); // [C_UPLOAD_GUILD_EMBLEM_IMG_BEGIN (UploadGuildEmblemImgBegin)]
 			packets[161] = new PacketInfo<>(CM_LEGION_UPLOAD_EMBLEM.class, State.IN_GAME); // [C_UPLOAD_GUILD_EMBLEM_IMG_DATA (&LAB_1406317e0)]
@@ -220,7 +220,7 @@ public class AionClientPacketFactory {
 			packets[192] = new PacketInfo<>(CM_INSTANCE_INFO.class, State.IN_GAME); // [C_INSTANCE_DUNGEON_COOLTIMES (InstanceDungeonCooltimePacket)]
 			// packets[193] = // [C_SHOP_REQUEST]
 			packets[194] = new PacketInfo<>(CM_SHOW_RESTRICTIONS.class, State.IN_GAME); // [C_ASK_BOT_POINT (&LAB_14063b3e0)] when writing /restriction in chat
-			// packets[195] = new PacketInfo<>(CM_SUMMON_TELEPORT_RESPONSE.class, State.IN_GAME); // [C_RECALLED_BY_OTHER_ANSWER (&LAB_14063b5b0)] when player accepts/declines SM_SUMMON_TELEPORT_REQUEST window
+			packets[195] = new PacketInfo<>(CM_RECALLED_BY_OTHER_ANSWER.class, State.IN_GAME); // [C_RECALLED_BY_OTHER_ANSWER (&LAB_14063b5b0)] when player accepts/declines SM_RECALLED_BY_OTHER window
 			packets[196] = new PacketInfo<>(CM_SHOW_MAP.class, State.IN_GAME); // [C_REQUEST_SERIAL_KILLER_LIST (RequestSerialKillerListPacket)]
 			packets[197] = new PacketInfo<>(CM_APPEARANCE.class, State.IN_GAME); // [C_ADDED_SERVICE_REQUEST (&LAB_14063ba60)]
 			// packets[198] = [C_SNDC_CHECK_MESSAGE (SndcCheckMessagePacket)]
@@ -293,8 +293,8 @@ public class AionClientPacketFactory {
 		}
 		if (!packetInfo.isValid(state)) {
 			if (NetworkConfig.LOG_IGNORED_PACKETS)
-				log.warn(client + " sent " + packetInfo.getPacketClassName() + " but the connections current state (" + state
-					+ ") is invalid for this packet. Packet won't be instantiated.");
+				log.warn("{} sent {} but the connection's current state ({}) is invalid for this packet - packet won't be instantiated", client,
+					packetInfo.getPacketClassName(), state);
 			return null;
 		}
 		return packetInfo.newPacket(opcode, data, client);

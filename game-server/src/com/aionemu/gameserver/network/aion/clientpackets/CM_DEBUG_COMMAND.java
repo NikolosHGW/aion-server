@@ -8,7 +8,7 @@ import com.aionemu.gameserver.network.aion.AionConnection;
 
 /**
  * Sent in the following cases:<br>
- * - Executing commands prefixed by //// in the command tab of the GM Panel (Shift + F1) if "Builder control (///)" is selected in the settings tab of
+ * - Executing commands prefixed by / or //// in the command tab of the GM Panel (Shift + F1) if "Builder control (///)" is selected in the settings tab of
  *   the GM Dialog (Shift + G)<br>
  * - Executing commands prefixed by ///// in the command tab of the GM Panel (Shift + F1) if "Builder command (//)" is selected in the settings tab of
  *   the GM Dialog (Shift + G)<br>
@@ -22,6 +22,6 @@ public class CM_DEBUG_COMMAND extends AbstractGmCommandPacket {
 
 	@Override
 	protected void runImpl() {
-		LoggerFactory.getLogger("ADMINAUDIT_LOG").info(getConnection().getActivePlayer() + " sent debug command ////" + command);
+		LoggerFactory.getLogger("ADMINAUDIT_LOG").info("{} sent debug command ////{}", getConnection().getActivePlayer(), command);
 	}
 }

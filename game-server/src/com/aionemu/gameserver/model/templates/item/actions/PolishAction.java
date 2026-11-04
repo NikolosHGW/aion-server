@@ -1,9 +1,11 @@
 package com.aionemu.gameserver.model.templates.item.actions;
 
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
-import javax.xml.bind.annotation.XmlAttribute;
-import javax.xml.bind.annotation.XmlType;
+import static com.aionemu.gameserver.model.items.ItemUseAnimation.*;
+
+import jakarta.xml.bind.annotation.XmlAccessType;
+import jakarta.xml.bind.annotation.XmlAccessorType;
+import jakarta.xml.bind.annotation.XmlAttribute;
+import jakarta.xml.bind.annotation.XmlType;
 
 import com.aionemu.gameserver.controllers.observer.ItemUseObserver;
 import com.aionemu.gameserver.dao.ItemStoneListDAO;
@@ -45,30 +47,37 @@ public class PolishAction extends AbstractItemAction {
 
 	@Override
 	public void act(Player player, Item parentItem, Item targetItem, Object... params) {
+		int useDelay = player.getItemUseDelay(5000);
 		PacketSendUtility.broadcastPacket(player,
-			new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), parentItem.getObjectId(), parentItem.getItemId(), 5000, 0, 0), true);
-		ItemUseObserver observer = new ItemUseObserver() {
+			new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), parentItem.getObjectId(), parentItem.getItemId(), useDelay, USE_START), true);
+		ItemUseObserver observer = new ItemUseObserver(player) {
 
 			@Override
-			public void abort() {
+			protected void onAbort() {
 				player.getController().cancelTask(TaskId.ITEM_USE);
-				player.removeItemCoolDown(parentItem.getItemTemplate().getUseLimits().getDelayId());
-				PacketSendUtility.sendPacket(player, SM_SYSTEM_MESSAGE.STR_ITEM_CANCELED());
+				PacketSendUtility.sendPacket(player, SM_SYSTEM_MESSAGE.STR_MSG_POLISH_CANCELED(targetItem.getL10n()));
 				PacketSendUtility.broadcastPacket(player,
-					new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), parentItem.getObjectId(), parentItem.getItemId(), 0, 2, 0), true);
-				player.getObserveController().removeObserver(this);
+					new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), parentItem.getObjectId(), parentItem.getItemId(), 0, USE_CANCEL), true);
 			}
 
 		};
-		player.getObserveController().attach(observer);
+		player.getObserveController().addObserver(observer);
 		player.getController().addTask(TaskId.ITEM_USE, ThreadPoolManager.getInstance().schedule(() -> {
 			player.getObserveController().removeObserver(observer);
 
+			if (player.getInventory().getItemByObjId(targetItem.getObjectId()) == null && !targetItem.isEquipped()) {
+				PacketSendUtility.sendPacket(player, SM_SYSTEM_MESSAGE.STR_ENCHANT_ITEM_NO_TARGET_ITEM());
+				PacketSendUtility.broadcastPacket(player,
+					new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), parentItem.getObjectId(), parentItem.getItemId(), 0, USE_FAIL), true);
+				return;
+			}
+
 			PacketSendUtility.broadcastPacket(player,
-				new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), parentItem.getObjectId(), parentItem.getItemId(), 0, 1, 1), true);
+				new SM_ITEM_USAGE_ANIMATION(player.getObjectId(), parentItem.getObjectId(), parentItem.getItemId(), 0, USE_SUCCESS), true);
 			if (!player.getInventory().decreaseByObjectId(parentItem.getObjectId(), 1)) {
 				return;
 			}
+			player.startCooldown(parentItem);
 			int bonusNumber = DataManager.ITEM_RANDOM_BONUSES.selectRandomBonusNumber(StatBonusType.POLISH, polishSetId);
 			if (bonusNumber == 0) {
 				PacketSendUtility.sendPacket(player, SM_SYSTEM_MESSAGE.STR_ENCHANT_ITEM_FAILED(parentItem.getL10n()));
@@ -88,7 +97,7 @@ public class PolishAction extends AbstractItemAction {
 				idianStone.onEquip(player, targetItem.getEquipmentSlot());
 			}
 			PacketSendUtility.sendPacket(player, new SM_INVENTORY_UPDATE_ITEM(player, targetItem));
-		}, 5000));
+		}, useDelay));
 
 	}
 

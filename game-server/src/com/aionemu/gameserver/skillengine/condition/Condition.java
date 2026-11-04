@@ -1,8 +1,8 @@
 package com.aionemu.gameserver.skillengine.condition;
 
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
-import javax.xml.bind.annotation.XmlType;
+import jakarta.xml.bind.annotation.XmlAccessType;
+import jakarta.xml.bind.annotation.XmlAccessorType;
+import jakarta.xml.bind.annotation.XmlType;
 
 import com.aionemu.gameserver.model.stats.calc.Stat2;
 import com.aionemu.gameserver.model.stats.calc.StatCondition;
@@ -24,6 +24,15 @@ public abstract class Condition implements StatCondition {
 	 * @return true or false
 	 */
 	public abstract boolean validate(Skill env);
+
+	/**
+	 * Checks whether {@link #validate(Skill)} would succeed, without paying anything.
+	 *
+	 * @return True, if the condition is met
+	 */
+	public boolean canValidate(Skill skill) {
+		return true;
+	}
 
 	@Override
 	public boolean validate(Stat2 stat, IStatFunction statFunction) {

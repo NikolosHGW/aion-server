@@ -109,7 +109,7 @@ public final class CompanionService {
 		CompanionPreflight.requireEnabled(AIConfig.ENABLED, AIConfig.COMPANIONS_ENABLED);
 		if (session != null || registry.getActive(SyntheticPlayerRole.COMPANION) != null)
 			throw new IllegalStateException("Stage 2A already has an active companion");
-		if (!GeoDataConfig.GEO_ENABLE || !GeoDataConfig.CANSEE_ENABLE)
+		if (GeoDataConfig.MODE != GeoDataConfig.Mode.ON || !GeoDataConfig.CANSEE_ENABLE)
 			throw new IllegalStateException("Stage 2A requires geodata and can-see checks");
 		CompanionPreflight.validateOwner(owner.getClientConnection() != null,
 			World.getInstance().findVisibleObject(owner.getObjectId()) == owner, owner.isSpawned(), runtime.isServerControlled(owner));

@@ -1,7 +1,7 @@
 ## Запуск
 
 ```bash
-docker compose -f docker-compose.db.yml -f docker-compose.servers.yml up -d
+docker compose -f docker-compose.db.yml -f docker-compose.servers.yml up -d --build
 ```
 
 Контейнеры и клиентские TCP-порты:
@@ -9,6 +9,15 @@ docker compose -f docker-compose.db.yml -f docker-compose.servers.yml up -d
 - `aion-login`: `2106`
 - `aion-game`: `7777`
 - `aion-chat`: `10241`
+
+Разработка AI продолжается в `integration/ai-4.8`; `feature/ai-mvp` сохранена
+для истории и не изменяется. Для этого этапа используем чистую базу: при новом
+Docker volume начальный скрипт импортирует полные SQL-схемы из репозитория,
+включая таблицы AI. `update.sql` поверх новой схемы запускать не нужно.
+Существующий volume автоматически не пересоздаётся и не обновляется.
+После создания новых аккаунтов настройте AI-host/template ID в локальном
+Docker-профиле: старые экспериментальные ID не относятся к пустой базе.
+Подробности: [интеграция 4.8](docs/ai/UPSTREAM_INTEGRATION_2026-11-04.md).
 
 MySQL (`3306`) опубликован только на `127.0.0.1` и не должен открываться в интернет.
 

@@ -8,11 +8,11 @@ import com.aionemu.gameserver.utils.chathandlers.AdminCommand;
 public class AiPlayer extends AdminCommand {
 
 	public AiPlayer() {
-		super("aiplayer", "Controls the single stage-1 server-controlled player.");
-		setSyntaxInfo(
-			"<spawn> - Load, validate and spawn the configured runtime-only template.",
-			"<despawn> - Safely remove the runtime player without saving.",
-			"<status> - Show lifecycle, world, scheduler and movement state.");
+		super("aiplayer", "Controls the single stage-1 server-controlled player.", """
+			<spawn> - Load, validate and spawn the configured runtime-only template.
+			<despawn> - Safely remove the runtime player without saving.
+			<status> - Show lifecycle, world, scheduler and movement state.
+			""");
 	}
 
 	@Override

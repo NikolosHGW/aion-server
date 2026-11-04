@@ -32,6 +32,8 @@ public class DropDistributionService {
 		DropNpc dropNpc = DropRegistrationService.getInstance().getDropRegistrationMap().get(npcObjId);
 		if (dropNpc == null)
 			return;
+		if (!dropNpc.containsPlayerStatus(player)) // only players the item was offered to may roll or bid (also covers a repeated roll)
+			return;
 		Set<DropItem> dropItems = DropRegistrationService.getInstance().getCurrentDropMap().get(npcObjId);
 		if (dropItems == null)
 			return;
@@ -63,7 +65,7 @@ public class DropDistributionService {
 		}
 		for (Player member : dropNpc.getInRangePlayers()) {
 			if (member == null) {
-				log.warn("member null Owner is in group? " + player.isInGroup() + " Owner is in Alliance? " + player.isInAlliance());
+				log.warn("member null Owner is in group? {} Owner is in Alliance? {}", player.isInGroup(), player.isInAlliance());
 				continue;
 			}
 			PacketSendUtility.sendPacket(member, new SM_GROUP_LOOT(dropNpc.getLootingTeamId(), member.getObjectId(), itemId, (int) requestedItem.getCount(),
