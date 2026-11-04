@@ -84,6 +84,8 @@ class SyntheticPlayerSchedulerTest {
 		private boolean featureEnabled = true;
 		private int ticks;
 		private String lastRemovalReason;
+		private boolean failRemoval;
+		private boolean failTick;
 
 		private TestPlayer(int objectId) {
 			this.objectId = objectId;
@@ -106,6 +108,8 @@ class SyntheticPlayerSchedulerTest {
 
 		@Override
 		public void tick() {
+			if (failTick)
+				throw new IllegalStateException("tick failure");
 			ticks++;
 		}
 
@@ -113,6 +117,51 @@ class SyntheticPlayerSchedulerTest {
 		public void requestRemoval(String reason) {
 			lastRemovalReason = reason;
 			removals.incrementAndGet();
+			if (failRemoval)
+				throw new IllegalStateException("cleanup failure");
 		}
+	}
+
+	@Test
+	void failingCleanupOfDisabledActorDoesNotStopOtherActorsOrFuturePasses() {
+		var scheduler = new SyntheticPlayerScheduler(() -> 10, () -> Long.MAX_VALUE / 2, System::nanoTime, false);
+		var broken = new TestPlayer(1);
+		broken.featureEnabled = false;
+		broken.failRemoval = true;
+		var healthy = new TestPlayer(2);
+		scheduler.registerScheduled(broken);
+		scheduler.registerScheduled(healthy);
+		assertDoesNotThrow(scheduler::runOnce);
+		assertDoesNotThrow(scheduler::runOnce);
+		assertEquals(2, healthy.ticks);
+		assertEquals(2, broken.removals.get());
+	}
+
+	@Test
+	void failingTickAndItsCleanupDoNotStopOtherActors() {
+		var scheduler = new SyntheticPlayerScheduler(() -> 10, () -> Long.MAX_VALUE / 2, System::nanoTime, false);
+		var broken = new TestPlayer(1);
+		broken.failTick = true;
+		broken.failRemoval = true;
+		var healthy = new TestPlayer(2);
+		scheduler.registerScheduled(broken);
+		scheduler.registerScheduled(healthy);
+		assertDoesNotThrow(scheduler::runOnce);
+		assertEquals(1, healthy.ticks);
+		assertEquals("scheduler-error", broken.lastRemovalReason);
+	}
+
+	@Test
+	void tenActorsWithSingleActionBudgetAllReceiveTurns() {
+		var scheduler = new SyntheticPlayerScheduler(() -> 1, () -> Long.MAX_VALUE / 2, System::nanoTime, false);
+		var actors = new TestPlayer[10];
+		for (int i = 0; i < actors.length; i++) {
+			actors[i] = new TestPlayer(i + 1);
+			scheduler.registerScheduled(actors[i]);
+		}
+		for (int i = 0; i < 30; i++)
+			scheduler.runOnce();
+		for (var actor : actors)
+			assertEquals(3, actor.ticks);
 	}
 }

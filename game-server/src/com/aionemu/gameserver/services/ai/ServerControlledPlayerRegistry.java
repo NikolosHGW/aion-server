@@ -19,7 +19,8 @@ public final class ServerControlledPlayerRegistry {
 		if (roleCollision != null)
 			throw new IllegalStateException("Synthetic player role is already active: " + player.getRole());
 		playersByObjectId.put(player.getObjectId(), player);
-		playersByRole.put(player.getRole(), player);
+		if (player.getRole() == SyntheticPlayerRole.ROUTE_SPIKE)
+			playersByRole.put(player.getRole(), player);
 	}
 
 	public synchronized void unregister(ServerControlledPlayer player) {
@@ -32,6 +33,8 @@ public final class ServerControlledPlayerRegistry {
 	}
 
 	public synchronized ServerControlledPlayer getActive(SyntheticPlayerRole role) {
+		if (role != SyntheticPlayerRole.ROUTE_SPIKE)
+			throw new IllegalArgumentException("Use an exact companion body or owner, not a singleton role lookup");
 		return playersByRole.get(role);
 	}
 

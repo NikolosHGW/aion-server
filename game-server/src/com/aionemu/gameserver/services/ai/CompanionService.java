@@ -1,8 +1,13 @@
 package com.aionemu.gameserver.services.ai;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.Map;
+import java.util.WeakHashMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,6 +23,7 @@ import com.aionemu.gameserver.model.account.PlayerAccountData;
 import com.aionemu.gameserver.model.gameobjects.Creature;
 import com.aionemu.gameserver.model.gameobjects.player.Player;
 import com.aionemu.gameserver.services.AccountService;
+import com.aionemu.gameserver.services.ai.CompanionSessions.Lease;
 import com.aionemu.gameserver.services.ai.combat.CombatActionGateway;
 import com.aionemu.gameserver.services.ai.combat.CombatContributionOwnerResolver;
 import com.aionemu.gameserver.services.ai.combat.CombatNpcAllowlist;
@@ -81,9 +87,9 @@ public final class CompanionService {
 	private final CompanionCreationService creationService = new CompanionCreationService(persistenceRepository,
 		new DefaultCompanionPlayerCreationGateway());
 	private final CombatContributionOwnerResolver contributionResolver = CombatContributionOwnerResolver.getInstance();
-	private final AtomicLong combatSessionIds = new AtomicLong();
-	private volatile CompanionSession session;
-	private volatile String lastRemovalReason = "";
+	private final CompanionSessions<Player, CompanionSession> sessions = new CompanionSessions<>();
+	private final Map<Integer, Object> ownershipOperations = new ConcurrentHashMap<>();
+	private final Map<Player, String> lastRemovalReasons = Collections.synchronizedMap(new WeakHashMap<>());
 
 	private CompanionService() {
 	}
@@ -92,7 +98,11 @@ public final class CompanionService {
 		return SingletonHolder.INSTANCE;
 	}
 
-	public synchronized CompanionCreationResult create(Player owner) {
+	public CompanionCreationResult create(Player owner) {
+		return withOwnershipOperation(owner, () -> createOwned(owner));
+	}
+
+	private CompanionCreationResult createOwned(Player owner) {
 		CompanionPreflight.requireEnabled(AIConfig.ENABLED, AIConfig.COMPANIONS_ENABLED);
 		requireCreationConfiguration();
 		CompanionPreflight.validateOwner(owner.getClientConnection() != null,
@@ -105,10 +115,31 @@ public final class CompanionService {
 		return result;
 	}
 
-	public synchronized ServerControlledPlayer summon(Player owner) {
-		CompanionPreflight.requireEnabled(AIConfig.ENABLED, AIConfig.COMPANIONS_ENABLED);
-		if (session != null || registry.getActive(SyntheticPlayerRole.COMPANION) != null)
-			throw new IllegalStateException("Stage 2A already has an active companion");
+	public ServerControlledPlayer summon(Player owner) {
+		return withOwnershipOperation(owner, () -> {
+			CompanionPreflight.requireEnabled(AIConfig.ENABLED, AIConfig.COMPANIONS_ENABLED);
+			Lease<Player, CompanionSession> lease = sessions.reserve(owner.getObjectId(), owner, AIConfig.COMPANION_MAX_ACTIVE);
+			return lease.call(() -> {
+				try {
+					return summonReserved(owner, lease);
+				} catch (RuntimeException | Error failure) {
+					if (lease.session() != null && sessions.contains(lease)) {
+						try {
+							dismissSession(lease.session(), "summon-failed");
+						} catch (RuntimeException | Error cleanupFailure) {
+							failure.addSuppressed(cleanupFailure);
+						}
+					}
+					throw failure;
+				} finally {
+					if (lease.session() == null)
+						sessions.release(lease);
+				}
+			});
+		});
+	}
+
+	private ServerControlledPlayer summonReserved(Player owner, Lease<Player, CompanionSession> lease) {
 		if (GeoDataConfig.MODE != GeoDataConfig.Mode.ON || !GeoDataConfig.CANSEE_ENABLE)
 			throw new IllegalStateException("Stage 2A requires geodata and can-see checks");
 		CompanionPreflight.validateOwner(owner.getClientConnection() != null,
@@ -127,12 +158,15 @@ public final class CompanionService {
 			objectId = body.playerId();
 			identityOrigin = "PRODUCT_CREATED";
 		} else {
+			if (!owner.isStaff())
+				throw new IllegalStateException("Personal companion creation must be enabled; the legacy template is staff-only");
 			if (AIConfig.COMPANION_TEMPLATE_ACCOUNT_ID <= 0 || AIConfig.COMPANION_TEMPLATE_CHARACTER_ID <= 0)
 				throw new IllegalStateException("Companion template account and character IDs must be configured");
 			accountId = AIConfig.COMPANION_TEMPLATE_ACCOUNT_ID;
 			objectId = AIConfig.COMPANION_TEMPLATE_CHARACTER_ID;
 			identityOrigin = "LEGACY_TEMPLATE";
 		}
+		sessions.claimBody(lease, objectId);
 		Account account = AccountService.loadAccount(accountId);
 		if (AIConfig.COMPANION_CREATION_ENABLED)
 			account.setName(AIConfig.COMPANION_CREATION_HOST_ACCOUNT_NAME);
@@ -155,7 +189,7 @@ public final class CompanionService {
 			companion.setPosition(spawnPosition);
 			companion.getCommonData().setName(runtimeName);
 
-			long combatSessionId = combatSessionIds.incrementAndGet();
+			long combatSessionId = lease.generation();
 			CompanionQuestExecutionRuntime executionRuntime = new CompanionQuestExecutionRuntime(owner.getObjectId(), companion.getObjectId(),
 				combatSessionId);
 			OwnerAttackSignalSource combatSignalSource = new OwnerAttackSignalSource(owner, companion, combatSessionId, System::currentTimeMillis);
@@ -168,24 +202,30 @@ public final class CompanionService {
 			CompanionCombatController combatController = new CompanionCombatController(owner.getObjectId(), companion.getObjectId(), combatSessionId,
 				combatSignalSource, combatGateway, this::isCombatFeatureEnabled, System::currentTimeMillis, AIConfig.COMPANION_COMBAT_OWNER_SIGNAL_TTL_MS);
 			CompanionController controller = new CompanionController(new PlayerCompanionContext(owner, companion),
-				new DefaultPlayerActionGateway(companion, owner, true), settings, this::dismissFromRuntime, System::currentTimeMillis, () -> {
-					maintainGoalSession();
+				new DefaultPlayerActionGateway(companion, owner, true), settings, reason -> dismissFromRuntime(lease, reason), System::currentTimeMillis, () -> {
+					maintainGoalSession(lease.session());
 					executionRuntime.pollIfDue();
 					combatController.tick();
 				}, combatController::isFollowCatchUpSuppressed);
-			controlledPlayer = new ServerControlledPlayer(companion, templateDatabaseName, runtimeName, SyntheticPlayerRole.COMPANION, controller,
-				() -> AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED, this::dismissFromRuntime);
+			controlledPlayer = new ServerControlledPlayer(companion, templateDatabaseName, runtimeName, SyntheticPlayerRole.COMPANION,
+				sessions.guard(lease, controller, () -> lease.session().controlledPlayer().isActive()),
+				() -> AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED && sessions.usable(lease),
+				reason -> dismissFromRuntime(lease, reason));
 			CompanionSession newSession = new CompanionSession(owner, controlledPlayer, controller,
 				new CompanionGoalSession(owner.getObjectId(), companion.getObjectId()), executionRuntime, combatSessionId, combatController,
-				new CompanionPersistenceRuntime());
+				new CompanionPersistenceRuntime(), lease);
 			ServerControlledPlayer finalControlledPlayer = controlledPlayer;
+			sessions.publish(lease, newSession);
 
 			SpawnTransaction.execute(new SpawnTransaction.Steps() {
 
 				@Override
 				public void registerWrapper() {
+					sessions.requireUsable(lease);
+					CompanionPreflight.requireEnabled(AIConfig.ENABLED, AIConfig.COMPANIONS_ENABLED);
+					CompanionPreflight.validateOwner(owner.getClientConnection() != null,
+						World.getInstance().findVisibleObject(owner.getObjectId()) == owner, owner.isSpawned(), runtime.isServerControlled(owner));
 					registry.register(finalControlledPlayer);
-					session = newSession;
 					contributionResolver.register(finalControlledPlayer.getPlayer(), owner, combatSessionId);
 					finalControlledPlayer.markRegistered();
 				}
@@ -208,6 +248,7 @@ public final class CompanionService {
 
 				@Override
 				public void registerScheduler() {
+					sessions.requireUsable(lease);
 					assertNoPeriodicSaveTasks(finalControlledPlayer.getPlayer());
 					scheduler.register(finalControlledPlayer);
 				}
@@ -224,45 +265,58 @@ public final class CompanionService {
 			});
 			restorePersistedGoal(newSession);
 
-			lastRemovalReason = "";
+			sessions.requireUsable(lease);
+			CompanionPreflight.requireEnabled(AIConfig.ENABLED, AIConfig.COMPANIONS_ENABLED);
+			lastRemovalReasons.remove(owner);
 			log.info(
 				"AI_COMPANION lifecycle=ACTIVE identityOrigin={} ownerObjectId={} ownerName={} companionObjectId={} companionDbName={} runtimeName={} connectionNull={} mapId={} instanceId={} mode={}",
 				identityOrigin, owner.getObjectId(), owner.getName(), objectId, templateDatabaseName, runtimeName, companion.getClientConnection() == null,
 				companion.getWorldId(), companion.getInstanceId(), controller.getMode());
 			return controlledPlayer;
 		} catch (RuntimeException | Error e) {
-			if (controlledPlayer == null && companion != null)
+			if (lease.session() == null && companion != null)
 				releaseRuntimeOnlyReferences(companion, templateDatabaseName);
 			throw e;
 		}
 	}
 
-	public synchronized void follow(Player requester) {
-		requireOwner(requester).controller().follow();
+	public void follow(Player requester) {
+		withOwner(requester, current -> {
+			current.controller().follow();
+			return null;
+		});
 	}
 
-	public synchronized void stay(Player requester) {
-		requireOwner(requester).controller().stay();
+	public void stay(Player requester) {
+		withOwner(requester, current -> {
+			current.controller().stay();
+			return null;
+		});
 	}
 
-	public synchronized boolean assistOn(Player requester) {
-		CompanionSession current = requireOwner(requester);
+	public boolean assistOn(Player requester) {
+		return withOwner(requester, current -> assistOn(current, requester));
+	}
+
+	private boolean assistOn(CompanionSession current, Player requester) {
 		requireCombatFeatureEnabled();
 		return current.combatController().enableAssist();
 	}
 
-	public synchronized boolean assistOff(Player requester) {
-		CompanionSession current = requireOwner(requester);
-		return current.combatController().disableAssist("admin-command");
+	public boolean assistOff(Player requester) {
+		return withOwner(requester, current -> current.combatController().disableAssist("owner-command"));
 	}
 
-	public synchronized String getCombatStatus(Player requester) {
-		return requireOwner(requester).combatController().status();
+	public String getCombatStatus(Player requester) {
+		return withOwner(requester, current -> current.combatController().status());
 	}
 
-	public synchronized QuestGoalProposalResult proposeGoal(Player requester) {
+	public QuestGoalProposalResult proposeGoal(Player requester) {
+		return withOwner(requester, current -> proposeGoal(current, requester));
+	}
+
+	private QuestGoalProposalResult proposeGoal(CompanionSession current, Player requester) {
 		requireGoalFeatureEnabled();
-		CompanionSession current = requireOwner(requester);
 		if (AIConfig.COMPANION_QUEST_EXECUTION_ENABLED) {
 			requireExecutionConfiguration();
 			var nativeState = requester.getQuestStateList().getQuestState(QuestExecutionAllowlist.FIRST_EXECUTION_QUEST_ID);
@@ -302,8 +356,11 @@ public final class CompanionService {
 		return QuestGoalProposalResult.offered(proposal.plan());
 	}
 
-	public synchronized ChoiceResult chooseGoal(Player requester) {
-		CompanionSession current = session;
+	public ChoiceResult chooseGoal(Player requester) {
+		return sessions.withOwner(requester.getObjectId(), requester, ChoiceResult.noOffer(), current -> chooseGoal(current, requester));
+	}
+
+	private ChoiceResult chooseGoal(CompanionSession current, Player requester) {
 		if (!AIConfig.ENABLED || !AIConfig.COMPANIONS_ENABLED || !AIConfig.COMPANION_QUEST_GOALS_ENABLED) {
 			if (current != null) {
 				current.goalSession().clear();
@@ -318,7 +375,7 @@ public final class CompanionService {
 			return logChoice(requester, current, current.goalSession().rejectSessionMismatch());
 
 		ServerControlledPlayer controlled = current.controlledPlayer();
-		if (registry.getActive(SyntheticPlayerRole.COMPANION) != controlled || controlled.getState() != SyntheticPlayerState.ACTIVE
+		if (!registry.contains(controlled) || controlled.getState() != SyntheticPlayerState.ACTIVE
 			|| current.goalSession().companionObjectId() != controlled.getObjectId())
 			return logChoice(requester, current, current.goalSession().rejectSessionMismatch());
 
@@ -393,8 +450,11 @@ public final class CompanionService {
 		return result;
 	}
 
-	public synchronized boolean clearGoal(Player requester) {
-		CompanionSession current = requireOwner(requester);
+	public boolean clearGoal(Player requester) {
+		return withOwner(requester, current -> clearGoal(current, requester));
+	}
+
+	private boolean clearGoal(CompanionSession current, Player requester) {
 		clearPersistedGoal(current);
 		boolean goalChanged = current.goalSession().clear();
 		boolean executionChanged = current.executionRuntime().clear("admin-command");
@@ -406,8 +466,11 @@ public final class CompanionService {
 		return changed;
 	}
 
-	public synchronized String getGoalStatus(Player requester) {
-		CompanionSession current = requireOwner(requester);
+	public String getGoalStatus(Player requester) {
+		return withOwner(requester, current -> getGoalStatus(current, requester));
+	}
+
+	private String getGoalStatus(CompanionSession current, Player requester) {
 		Player companion = current.controlledPlayer().getPlayer();
 		QuestExecutionState absentState = current.goalSession().offered() != null && current.goalSession().chosen() == null
 			? QuestExecutionState.OFFERED : QuestExecutionState.NO_GOAL;
@@ -419,48 +482,54 @@ public final class CompanionService {
 				companion.getInstanceId(), absentState);
 	}
 
-	public synchronized boolean dismiss(Player requester, String reason) {
-		CompanionSession current = session;
-		if (current == null)
-			return false;
-		if (current.owner() != requester)
-			throw new IllegalStateException("Only the companion owner may dismiss it");
-		return dismissSession(current, reason);
+	public boolean dismiss(Player requester, String reason) {
+		Lease<Player, CompanionSession> lease = sessions.byOwner(requester.getObjectId(), requester);
+		return lease != null && removeLease(lease, reason);
 	}
 
-	public synchronized void ownerLeaving(Player owner, String reason) {
-		CompanionSession current = session;
-		if (current != null && current.owner() == owner)
-			dismissSession(current, reason);
+	public void ownerLeaving(Player owner, String reason) {
+		Lease<Player, CompanionSession> lease = sessions.byOwner(owner.getObjectId(), owner);
+		if (lease != null)
+			removeLease(lease, reason);
 	}
 
-	public synchronized void shutdown() {
-		CompanionSession current = session;
-		if (current != null)
-			dismissSession(current, "shutdown");
+	public void shutdown() {
+		// Close admission and cancel every pending summon before waiting for any owner's lock.
+		try {
+			sessions.shutdown(lease -> removeLease(lease, "shutdown"));
+		} catch (RuntimeException e) {
+			log.error("Companion shutdown attempted all sessions but some cleanup failed", e);
+		}
 	}
 
-	public synchronized boolean isActiveCompanion(Player player) {
-		CompanionSession current = session;
+	public boolean isActiveCompanion(Player player) {
+		Lease<Player, CompanionSession> lease = sessions.byBody(player.getObjectId());
+		CompanionSession current = lease == null ? null : lease.session();
 		return current != null && current.controlledPlayer().getPlayer() == player && current.controlledPlayer().getRole() == SyntheticPlayerRole.COMPANION
 			&& current.controlledPlayer().getState() == SyntheticPlayerState.ACTIVE
-			&& registry.getActive(SyntheticPlayerRole.COMPANION) == current.controlledPlayer()
+			&& registry.contains(current.controlledPlayer())
 			&& contributionResolver.matches(player, current.owner(), current.combatSessionId(), true);
 	}
 
-	public synchronized void companionDied(Player player, Creature lastAttacker) {
-		CompanionSession current = session;
+	public void companionDied(Player player, Creature lastAttacker) {
+		Lease<Player, CompanionSession> lease = sessions.byBody(player.getObjectId());
+		CompanionSession current = lease == null ? null : lease.session();
 		if (current == null || current.controlledPlayer().getPlayer() != player)
 			return;
 		String attacker = lastAttacker == null ? "unknown" : Integer.toString(lastAttacker.getObjectId());
 		log.info(
 			"AI_COMPANION_COMBAT action=SYNTHETIC_DEATH result=CLEANUP_REQUESTED ownerObjectId={} companionObjectId={} lastAttackerObjectId={} persistence=false",
 			current.owner().getObjectId(), player.getObjectId(), attacker);
-		dismissSession(current, "synthetic-death:last-attacker=" + attacker);
+		removeLease(lease, "synthetic-death:last-attacker=" + attacker);
 	}
 
 	public String getStatus() {
-		CompanionSession current = session;
+		return "reservedOrActive=" + sessions.size() + ", capacity=" + AIConfig.COMPANION_MAX_ACTIVE
+			+ ", flags=" + AIConfig.ENABLED + "/" + AIConfig.COMPANIONS_ENABLED;
+	}
+
+	private String runtimeStatus(CompanionSession current, Player requester) {
+		String lastRemovalReason = lastRemovalReasons.getOrDefault(requester, "");
 		if (current == null)
 			return "active=false, flags=" + AIConfig.ENABLED + "/" + AIConfig.COMPANIONS_ENABLED + ", assistEnabled=false"
 				+ ", attackObserverAttached=false, combatFeatureEnabled=" + isCombatFeatureEnabled() + ", lastRemovalReason=" + lastRemovalReason;
@@ -513,7 +582,8 @@ public final class CompanionService {
 	}
 
 	public String getStatus(Player requester) {
-		String runtimeStatus = getStatus();
+		String runtimeStatus = sessions.withOwner(requester.getObjectId(), requester, runtimeStatus(null, requester),
+			current -> runtimeStatus(current, requester));
 		if (!AIConfig.COMPANION_CREATION_ENABLED)
 			return runtimeStatus + ", productCreationEnabled=false";
 		requireCreationConfiguration();
@@ -526,8 +596,7 @@ public final class CompanionService {
 			+ ", ownedCompanionDbName=" + body.databaseName() + ", companionHostAccountId=" + body.accountId();
 	}
 
-	private synchronized void maintainGoalSession() {
-		CompanionSession current = session;
+	private void maintainGoalSession(CompanionSession current) {
 		if (current == null)
 			return;
 		if (!AIConfig.ENABLED || !AIConfig.COMPANIONS_ENABLED || !AIConfig.COMPANION_QUEST_GOALS_ENABLED) {
@@ -790,10 +859,24 @@ public final class CompanionService {
 		return goalPlanner.propose(owner.getLevel(), assessments);
 	}
 
-	private synchronized void dismissFromRuntime(String reason) {
-		CompanionSession current = session;
-		if (current != null)
-			dismissSession(current, reason);
+	private void dismissFromRuntime(Lease<Player, CompanionSession> lease, String reason) {
+		sessions.cancel(lease);
+		// A busy owner's command must not stall the shared scheduler. Cancellation disables ticks;
+		// the next scheduler pass retries cleanup if this pass cannot acquire the session lock.
+		lease.tryRun(() -> removeLease(lease, reason));
+	}
+
+	private boolean removeLease(Lease<Player, CompanionSession> lease, String reason) {
+		sessions.cancel(lease);
+		return lease.call(() -> {
+			if (!sessions.contains(lease))
+				return false;
+			if (lease.session() == null) {
+				sessions.release(lease);
+				return true;
+			}
+			return dismissSession(lease.session(), reason);
+		});
 	}
 
 	private boolean dismissSession(CompanionSession current, String reason) {
@@ -816,13 +899,30 @@ public final class CompanionService {
 		return true;
 	}
 
-	private CompanionSession requireOwner(Player requester) {
-		CompanionSession current = session;
-		if (current == null)
-			throw new IllegalStateException("No active companion");
-		if (current.owner() != requester)
-			throw new IllegalStateException("Only the companion owner may control it");
-		return current;
+	private <T> T withOwner(Player requester, Function<CompanionSession, T> action) {
+		Lease<Player, CompanionSession> lease = sessions.byOwner(requester.getObjectId(), requester);
+		if (lease == null)
+			throw new IllegalStateException("No active companion belonging to you; use //companion summon");
+		return lease.call(() -> {
+			sessions.requireUsable(lease);
+			CompanionSession current = lease.session();
+			if (current == null || !current.controlledPlayer().isActive())
+				throw new IllegalStateException("Your companion is not active");
+			return action.apply(current);
+		});
+	}
+
+	private <T> T withOwnershipOperation(Player owner, Supplier<T> action) {
+		if (sessions.isClosed())
+			throw new IllegalStateException("Companion service is shutting down");
+		Object token = new Object();
+		if (ownershipOperations.putIfAbsent(owner.getObjectId(), token) != null)
+			throw new IllegalStateException("Your companion is being created or summoned; please wait");
+		try {
+			return action.get();
+		} finally {
+			ownershipOperations.remove(owner.getObjectId(), token);
+		}
 	}
 
 	private CompanionFollowSettings followSettings() {
@@ -870,14 +970,19 @@ public final class CompanionService {
 	private void removeRuntimeCompanion(CompanionSession current, String reason) {
 		ServerControlledPlayer controlled = current.controlledPlayer();
 		Player companion = controlled.getPlayer();
+		if (!sessions.contains(current.lease()))
+			return;
+		sessions.cancel(current.lease());
 		controlled.beginRemoval();
-		contributionResolver.beginRemoval(companion, current.combatSessionId());
-		current.combatController().beginRemoval(reason);
-		current.controller().beginRemoval();
-		current.goalSession().clear();
-		if (current.executionRuntime().clear(reason))
-			logExecutionDetach(current, reason);
 		List<RuntimeException> failures = new ArrayList<>();
+		attemptCleanup("attribution-removing", () -> contributionResolver.beginRemoval(companion, current.combatSessionId()), failures);
+		attemptCleanup("combat", () -> current.combatController().beginRemoval(reason), failures);
+		attemptCleanup("controller", () -> current.controller().beginRemoval(), failures);
+		attemptCleanup("goal", () -> current.goalSession().clear(), failures);
+		attemptCleanup("quest", () -> {
+			if (current.executionRuntime().clear(reason))
+				logExecutionDetach(current, reason);
+		}, failures);
 		attemptCleanup("scheduler", () -> scheduler.unregister(controlled), failures);
 		attemptCleanup("movement", controlled::stopMovement, failures);
 		attemptCleanup("target", () -> companion.setTarget(null), failures);
@@ -888,13 +993,15 @@ public final class CompanionService {
 		}, failures);
 		if (World.getInstance().findVisibleObject(companion.getObjectId()) != companion) {
 			attemptCleanup("registry", () -> registry.unregister(controlled), failures);
-			if (session == current)
-				session = null;
-			controlled.markRemoved();
 			attemptCleanup("runtime-references", () -> releaseRuntimeOnlyReferences(companion, controlled.getTemplateDatabaseName()), failures);
 			attemptCleanup("combat-attribution", () -> contributionResolver.unregister(companion, current.combatSessionId()), failures);
 		}
-		lastRemovalReason = reason;
+		attemptCleanup("postconditions", () -> verifyAbsent(current, false), failures);
+		lastRemovalReasons.put(current.owner(), reason);
+		if (failures.isEmpty()) {
+			sessions.release(current.lease());
+			controlled.markRemoved();
+		}
 		log.info(
 			"AI_COMPANION lifecycle={} reason={} ownerObjectId={} ownerName={} companionObjectId={} runtimeName={} connectionNull={} worldPresent={} schedulerRegistered={} movementRegistered={}",
 			controlled.getState(), reason, current.owner().getObjectId(), current.owner().getName(), companion.getObjectId(), controlled.getRuntimeName(),
@@ -917,6 +1024,10 @@ public final class CompanionService {
 	}
 
 	private void verifyAbsent(CompanionSession current) {
+		verifyAbsent(current, true);
+	}
+
+	private void verifyAbsent(CompanionSession current, boolean includeSession) {
 		ServerControlledPlayer controlled = current.controlledPlayer();
 		Player companion = controlled.getPlayer();
 		List<String> retainedBy = new ArrayList<>();
@@ -931,7 +1042,7 @@ public final class CompanionService {
 			retainedBy.add("scheduler");
 		if (PlayerMoveTaskManager.getInstance().contains(companion))
 			retainedBy.add("movementManager");
-		if (session == current)
+		if (includeSession && sessions.contains(current.lease()))
 			retainedBy.add("companionSession");
 		if (current.combatController().isObserverAttached())
 			retainedBy.add("ownerAttackObserver");
@@ -1000,7 +1111,7 @@ public final class CompanionService {
 
 	private record CompanionSession(Player owner, ServerControlledPlayer controlledPlayer, CompanionController controller,
 		CompanionGoalSession goalSession, CompanionQuestExecutionRuntime executionRuntime, long combatSessionId,
-		CompanionCombatController combatController, CompanionPersistenceRuntime persistenceRuntime) {
+		CompanionCombatController combatController, CompanionPersistenceRuntime persistenceRuntime, Lease<Player, CompanionSession> lease) {
 	}
 
 	private static final class SingletonHolder {

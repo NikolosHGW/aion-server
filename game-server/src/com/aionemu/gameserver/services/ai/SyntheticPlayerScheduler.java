@@ -86,7 +86,7 @@ public final class SyntheticPlayerScheduler {
 			}
 			ScheduledSyntheticPlayer player = players.get((startIndex + offset) % players.size());
 			if (!player.isFeatureEnabled()) {
-				player.requestRemoval("feature-disabled");
+				requestRemoval(player, "feature-disabled");
 				continue;
 			}
 			if (!player.isActive())
@@ -96,13 +96,22 @@ public final class SyntheticPlayerScheduler {
 				actions++;
 			} catch (RuntimeException e) {
 				log.error("Synthetic player {} tick failed; requesting removal", player.getObjectId(), e);
-				player.requestRemoval("scheduler-error");
+				requestRemoval(player, "scheduler-error");
 			}
 		}
 		if (budgetMiss) {
 			budgetMissCount.incrementAndGet();
 		}
 		return new TickStats(actions, budgetMiss);
+	}
+
+	private void requestRemoval(ScheduledSyntheticPlayer player, String reason) {
+		try {
+			player.requestRemoval(reason);
+		} catch (RuntimeException e) {
+			// One failed cleanup must not cancel the shared scheduled future for every actor.
+			log.error("Synthetic player {} cleanup failed; other actors will continue", player.getObjectId(), e);
+		}
 	}
 
 	public long getTickCount() {

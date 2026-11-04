@@ -10,13 +10,13 @@ import com.aionemu.gameserver.utils.chathandlers.AdminCommand;
 public class Companion extends AdminCommand {
 
 	public Companion() {
-		super("companion", "Controls the single runtime companion.", """
+		super("companion", "Controls your personal companion.", """
 			<create> - Create your persistent personal companion once; does not summon it.
 			<summon> - Spawn your already-created persistent companion.
 			<follow> - Resume following you.
 			<stay> - Stop and remain in the world.
 			<assist on|off|status> - Arm or disarm one-hit reactions to owner attack events.
-			<dismiss> - Remove the companion without persistence.
+			<dismiss> - Dismiss your companion; keep its ownership and saved goal.
 			<status> - Show owner, lifecycle, movement and world diagnostics.
 			<today> - Offer one read-only quest goal from the configured allowlist.
 			<goal choose|status|clear> - Manage the persistent quest goal intent.
@@ -25,6 +25,14 @@ public class Companion extends AdminCommand {
 
 	@Override
 	public void execute(Player admin, String... params) {
+		try {
+			executeOwned(admin, params);
+		} catch (IllegalStateException e) {
+			sendInfo(admin, e.getMessage());
+		}
+	}
+
+	private void executeOwned(Player admin, String... params) {
 		if (params.length == 2 && params[0].equalsIgnoreCase("assist")) {
 			executeAssist(admin, params[1]);
 			return;
@@ -62,8 +70,8 @@ public class Companion extends AdminCommand {
 				sendInfo(admin, service.getStatus(admin));
 			}
 			case "dismiss" -> {
-				boolean removed = service.dismiss(admin, "admin-command:" + admin.getName());
-				sendInfo(admin, removed ? "Companion removed without persistence." : "Companion is already absent.");
+				boolean removed = service.dismiss(admin, "owner-command:" + admin.getName());
+				sendInfo(admin, removed ? "Your companion was dismissed; ownership and saved goal remain." : "Your companion is already absent.");
 				sendInfo(admin, service.getStatus(admin));
 			}
 			case "status" -> sendInfo(admin, service.getStatus(admin));

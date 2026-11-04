@@ -137,7 +137,18 @@ public final class CompanionPersistenceDAO implements CompanionPersistenceReposi
 	public CompanionBinding finalizeCreation(CompanionCreationClaim expectedClaim, CompanionBodyRecord expectedBody) {
 		if (expectedClaim == null || expectedBody == null)
 			throw new IllegalArgumentException("Creation claim and companion body are required");
+		try {
+			return retryRolledBackDeadlock(() -> finalizeCreationAttempt(expectedClaim, expectedBody));
+		} catch (SQLException | RuntimeException e) {
+			throw new CompanionPersistenceException("Could not finalize companion creation for owner " + expectedClaim.ownerPlayerId(), e);
+		}
+	}
+
+	private CompanionBinding finalizeCreationAttempt(CompanionCreationClaim expectedClaim, CompanionBodyRecord expectedBody) throws SQLException {
 		try (Connection connection = DatabaseFactory.getConnection()) {
+			// The existing claim row serializes one owner; do not gap-lock other owners' absent bindings.
+			// Uniqueness is still enforced by the owner/body constraints on insertion.
+			connection.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
 			connection.setAutoCommit(false);
 			try {
 				CompanionCreationClaim claim = loadClaimForUpdate(connection, expectedClaim.ownerPlayerId());
@@ -170,9 +181,24 @@ public final class CompanionPersistenceDAO implements CompanionPersistenceReposi
 				rollback(connection, e);
 				throw e;
 			}
-		} catch (SQLException | RuntimeException e) {
-			throw new CompanionPersistenceException("Could not finalize companion creation for owner " + expectedClaim.ownerPlayerId(), e);
 		}
+	}
+
+	/** Only retry a known rolled-back deadlock, never a connection failure with an uncertain commit. */
+	static <T> T retryRolledBackDeadlock(SqlTransaction<T> transaction) throws SQLException {
+		for (int attempt = 1; ; attempt++) {
+			try {
+				return transaction.execute();
+			} catch (SQLException e) {
+				if (attempt >= 3 || e.getErrorCode() != 1213 || !"40001".equals(e.getSQLState()) || e.getSuppressed().length != 0)
+					throw e;
+			}
+		}
+	}
+
+	@FunctionalInterface
+	interface SqlTransaction<T> {
+		T execute() throws SQLException;
 	}
 
 	@Override

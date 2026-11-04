@@ -18,6 +18,9 @@ public class AIConfig {
 	@Property(key = "ai.companions.enabled", defaultValue = "false")
 	public static boolean COMPANIONS_ENABLED;
 
+	@Property(key = "ai.companions.max_active", defaultValue = "10")
+	public static int COMPANION_MAX_ACTIVE;
+
 	@Property(key = "ai.companions.quest_goals.enabled", defaultValue = "false")
 	public static boolean COMPANION_QUEST_GOALS_ENABLED;
 

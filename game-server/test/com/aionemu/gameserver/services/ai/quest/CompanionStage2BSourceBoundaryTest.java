@@ -60,7 +60,7 @@ class CompanionStage2BSourceBoundaryTest {
 	void goalSessionIsClearedByAllExistingCompanionRemovalPathsAndRuntimeDisableMaintenance() throws IOException {
 		String service = Files.readString(Path.of("src/com/aionemu/gameserver/services/ai/CompanionService.java"));
 		assertTrue(service.contains("current.goalSession().clear()"));
-		assertTrue(service.contains("maintainGoalSession();"));
+		assertTrue(service.contains("maintainGoalSession(lease.session());"));
 		assertTrue(service.contains("combatController.tick();"));
 		assertTrue(service.contains("ownerLeaving"));
 		assertTrue(service.contains("shutdown()"));
