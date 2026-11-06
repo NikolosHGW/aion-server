@@ -1,0 +1,80 @@
+{
+  "head": "b4415d3ffc94759a2c530fff642c051a7de2366b",
+  "diff_sha256": "fd6583a0fa962f54ebe24d81ecc1a7e6121068c2b5a22e31e977163104d70980",
+  "java_sources_and_runner_sha256": "9c04e1c39cdad8790c8d44a3ef90879fae8595d4a05adf2bc80f7fefc56e1d74",
+  "server_package_sha256": "18faa7457ff309dd179fa53c7140f3f52a15177fb9dae76dbbc476a6160878d0",
+  "container": "aion-ai-c8-a68422eaa90d",
+  "database": "ai_c8_runtime",
+  "phases": [
+    {
+      "phase": "fresh-items",
+      "passed": true,
+      "seconds": 20.21,
+      "log_sha256": "fb5a14ed0d6def4a5761c386f64507790e4ec156ebe75242ace4bca9c6c00eaf",
+      "load": []
+    },
+    {
+      "phase": "items-restart",
+      "passed": true,
+      "seconds": 11.14,
+      "log_sha256": "7cc6b9cea5f768ff308d1faa57da6f99296b47848311f97bbf12f1b7baa41dc8",
+      "load": []
+    },
+    {
+      "phase": "combat",
+      "passed": true,
+      "seconds": 32.83,
+      "log_sha256": "171a3228b0b7340f33679f4129460404d280fc5ec5ac1bcc116b60cb7feabfd1",
+      "load": []
+    },
+    {
+      "phase": "combat-restart",
+      "passed": true,
+      "seconds": 9.71,
+      "log_sha256": "5c71e5bb3b116ea2bbc6882ce766a39c8d1881f67a5f173c101fab18516c4c04",
+      "load": []
+    },
+    {
+      "phase": "navigation",
+      "passed": true,
+      "seconds": 10.51,
+      "log_sha256": "9feab11e507d2e3d485175aa40f5d73091359ffad10775765c3755761983465d",
+      "load": []
+    },
+    {
+      "phase": "quest",
+      "passed": true,
+      "seconds": 11.2,
+      "log_sha256": "c932862b80d1751b4d04f66d1a7113e25b7ebf801c8966bf9f91e4b76059de84",
+      "load": []
+    },
+    {
+      "phase": "quest-restart",
+      "passed": true,
+      "seconds": 10.37,
+      "log_sha256": "d637f572007f95bbbcffcb165ea870604654ed3390e5f6c9004c1a3cf1a3c6fe",
+      "load": []
+    },
+    {
+      "phase": "load-cleanup",
+      "passed": true,
+      "seconds": 61.86,
+      "log_sha256": "f0c61f20b120968db13c1e3d8a4a26f26bed88c99a00b60afe7f3b7d4f27bea0",
+      "load": [
+        "C8_LOAD actors=0 passes=120 p50_us=0 p95_us=0 max_us=19 budget_misses=0 elapsed_ms=1 process_heap_bytes=855049184",
+        "C8_LOAD actors=2 passes=120 p50_us=220 p95_us=910 max_us=13349 budget_misses=3 elapsed_ms=24117 process_heap_bytes=904245416",
+        "C8_LOAD actors=10 passes=120 p50_us=213 p95_us=953 max_us=1961 budget_misses=0 elapsed_ms=24121 process_heap_bytes=970451744"
+      ]
+    },
+    {
+      "phase": "load-restart",
+      "passed": true,
+      "seconds": 10.83,
+      "log_sha256": "f239d98d6d2cf7bf34d55da237561d3a08924c63c4f7e523d133f70c36fc788c",
+      "load": []
+    }
+  ],
+  "status": "PASS",
+  "limits": "Connectivity seam; no client/login/packet acceptance or production throughput claim.",
+  "container_stopped": true
+}

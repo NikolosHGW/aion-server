@@ -100,7 +100,9 @@ public final class CompanionC3RuntimeProbe {
 			var aliasCollision = new CompanionCreationClaim(source.playerId(), CompanionCreationPolicy.databaseName(source.playerId()), HOST, HOST_NAME, null, blueprint);
 			rejected(() -> repository.reserveCreation(aliasCollision), "permanent alias collision rejected");
 			fixture("UPDATE player_appearance SET hair=1 WHERE player_id=" + source.playerId());
-			fixture("DELETE FROM players WHERE id=" + source.playerId());
+			PlayerService.deletePlayerFromDB(source.playerId());
+			check(scalar("SELECT COUNT(*) FROM inventory WHERE item_owner=" + source.playerId()) == 0,
+				"native source deletion leaves no orphan items for a reused player ID");
 			check(repository.loadCreationClaim(ownerId).orElseThrow().blueprint().appearance().getHair() == 19, "source edits and deletion cannot change companion");
 		}
 

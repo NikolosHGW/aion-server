@@ -36,7 +36,7 @@ public final class CompanionC5RuntimeProbe {
 		var claim = new CompanionPersistenceDAO().loadCreationClaim(ownerId).orElseThrow();
 		return PlayerService.getServerControlledPlayer(claim.companionPlayerId(), AccountService.loadServerControlledAccount(880003, "ai_c3_host", claim.companionPlayerId()), claim.blueprint().advancedClass());
 	}
-	private static void run(String phase) throws Exception {
+	static void run(String phase) throws Exception {
 		if (phase.equals("create")) CompanionC3RuntimeProbe.run("create");
 		int ownerId = (int) CompanionC3RuntimeProbe.scalar("SELECT id FROM players WHERE name='Cthreeownera'");
 		Player owner = CompanionC3RuntimeProbe.load(770031, "c3_owner_a", ownerId, false), body = body(ownerId);

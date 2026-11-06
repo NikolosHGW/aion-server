@@ -63,7 +63,7 @@ public final class CompanionC4RuntimeProbe {
 	private static void freezeRegen(Player... actors) {
 		for (Player actor : actors) actor.getLifeStats().cancelRestoreTask();
 	}
-	private static void run(String phase) throws Exception {
+	static void run(String phase) throws Exception {
 		for (String group : List.of("CL_HEAL", "CL_SMITE", "WA_ROBUSTHIT", "WA_ROBUSTBLOW")) {
 			var ranks = DataManager.SKILL_DATA.getSkillTemplatesByGroup(group);
 			check(!ranks.isEmpty() && ranks.stream().allMatch(t -> CompanionSkillPolicy.supported(t, group)), "native template shape audit: " + group);

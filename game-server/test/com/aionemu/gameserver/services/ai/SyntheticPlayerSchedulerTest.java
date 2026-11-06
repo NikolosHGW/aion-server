@@ -9,6 +9,37 @@ import org.junit.jupiter.api.Test;
 
 class SyntheticPlayerSchedulerTest {
 
+	@Test void lastActionOverrunIsCountedEvenAtActionLimit() {
+		AtomicLong clock = new AtomicLong();
+		var scheduler = new SyntheticPlayerScheduler(() -> 1, () -> 100, clock::get, false);
+		scheduler.registerScheduled(new ScheduledSyntheticPlayer() {
+			public int getObjectId() { return 1; }
+			public boolean isActive() { return true; }
+			public boolean isFeatureEnabled() { return true; }
+			public void tick() { clock.addAndGet(101); }
+			public void requestRemoval(String reason) { }
+		});
+		assertTrue(scheduler.runOnce().budgetMiss());
+		assertEquals(101, scheduler.getLastTickNanos());
+		assertEquals(101, scheduler.getMaxTickNanos());
+		assertEquals(1, scheduler.getBudgetMissCount());
+	}
+
+	@Test void exactBudgetIsNotAnOverrunAndEmptyPassResetsLastDuration() {
+		AtomicLong clock = new AtomicLong();
+		var scheduler = new SyntheticPlayerScheduler(() -> 1, () -> 100, clock::get, false);
+		scheduler.registerScheduled(new ScheduledSyntheticPlayer() {
+			public int getObjectId() { return 1; }
+			public boolean isActive() { return true; }
+			public boolean isFeatureEnabled() { return true; }
+			public void tick() { clock.addAndGet(100); }
+			public void requestRemoval(String reason) { }
+		});
+		assertFalse(scheduler.runOnce().budgetMiss());
+		scheduler.shutdown(); assertEquals(0, scheduler.runOnce().actions());
+		assertEquals(0, scheduler.getLastTickNanos()); assertEquals(100, scheduler.getMaxTickNanos());
+	}
+
 	@Test
 	void schedulerRespectsActionAndTimeBudget() {
 		AtomicLong clock = new AtomicLong();

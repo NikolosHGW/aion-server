@@ -26,6 +26,8 @@ public final class SyntheticPlayerScheduler {
 	private final boolean scheduleAutomatically;
 	private final AtomicLong tickCount = new AtomicLong();
 	private final AtomicLong budgetMissCount = new AtomicLong();
+	private final AtomicLong lastTickNanos = new AtomicLong();
+	private final AtomicLong maxTickNanos = new AtomicLong();
 	private final AtomicInteger nextStartIndex = new AtomicInteger();
 	private volatile Future<?> future;
 
@@ -66,14 +68,17 @@ public final class SyntheticPlayerScheduler {
 	}
 
 	TickStats runOnce() {
+		long started = nanoTime.getAsLong();
 		tickCount.incrementAndGet();
 		List<ScheduledSyntheticPlayer> players = List.copyOf(scheduledPlayers.values());
-		if (players.isEmpty())
+		if (players.isEmpty()) {
+			recordDuration(started);
 			return new TickStats(0, false);
+		}
 
 		int actionLimit = Math.max(1, maxActions.getAsInt());
-		long started = nanoTime.getAsLong();
-		long deadline = started + Math.max(1, budgetNanos.getAsLong());
+		long budget = Math.max(1, budgetNanos.getAsLong());
+		long deadline = started + budget;
 		int actions = 0;
 		boolean budgetMiss = false;
 		int startIndex = Math.floorMod(nextStartIndex.getAndIncrement(), players.size());
@@ -99,11 +104,24 @@ public final class SyntheticPlayerScheduler {
 				requestRemoval(player, "scheduler-error");
 			}
 		}
+		// A synchronous native action cannot be preempted. Count its overrun even when
+		// it was the last action (or exhausted the action limit) in this pass.
+		budgetMiss |= recordDuration(started) > budget;
 		if (budgetMiss) {
 			budgetMissCount.incrementAndGet();
 		}
 		return new TickStats(actions, budgetMiss);
 	}
+
+	private long recordDuration(long started) {
+		long elapsed = Math.max(0, nanoTime.getAsLong() - started);
+		lastTickNanos.set(elapsed);
+		maxTickNanos.accumulateAndGet(elapsed, Math::max);
+		return elapsed;
+	}
+
+	public long getLastTickNanos() { return lastTickNanos.get(); }
+	public long getMaxTickNanos() { return maxTickNanos.get(); }
 
 	private void requestRemoval(ScheduledSyntheticPlayer player, String reason) {
 		try {
