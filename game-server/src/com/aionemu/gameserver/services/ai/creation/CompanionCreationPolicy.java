@@ -23,6 +23,8 @@ public final class CompanionCreationPolicy {
 		if (claim.ownerPlayerId() != request.ownerPlayerId() || !claim.databaseName().equals(databaseName(request.ownerPlayerId()))
 			|| claim.hostAccountId() != hostAccountId || !claim.hostAccountName().equals(hostAccountName))
 			throw new IllegalStateException("Persistent companion creation claim does not match current configuration");
+		if (claim.blueprint() != null && !claim.blueprint().race().equals(request.race()))
+			throw new IllegalStateException("Companion profile must belong to the owner's faction");
 	}
 
 	public static void validateOwnedBody(CompanionBinding binding, CompanionCreationClaim claim, CompanionCreationRequest request,
@@ -32,8 +34,15 @@ public final class CompanionCreationPolicy {
 			|| !CompanionGoalRestorePolicy.ROLE_PERSONAL_COMPANION.equals(binding.role()) || claim.companionPlayerId() == null
 			|| claim.companionPlayerId() != body.playerId() || !body.databaseName().equals(claim.databaseName())
 			|| body.accountId() != hostAccountId || !body.accountName().equals(hostAccountName) || !body.race().equals(request.race())
-			|| !body.gender().equals(request.gender()) || !STARTING_CLASS.equals(body.playerClass()) || body.online()
+			|| !body.gender().equals(claim.blueprint() == null ? request.gender() : claim.blueprint().gender())
+			|| !validClass(claim, body.playerClass()) || body.online()
 			|| !body.standardCreationComplete())
 			throw new IllegalStateException("Persistent companion body does not match its immutable ownership claim");
+	}
+
+	private static boolean validClass(CompanionCreationClaim claim, String playerClass) {
+		return claim.blueprint() == null ? STARTING_CLASS.equals(playerClass)
+			: claim.blueprint().advancedClass().name().equals(playerClass)
+				|| claim.blueprint().advancedClass().getStartingClass().name().equals(playerClass);
 	}
 }

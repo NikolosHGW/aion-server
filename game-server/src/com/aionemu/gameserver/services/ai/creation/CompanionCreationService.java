@@ -29,7 +29,8 @@ public final class CompanionCreationService {
 		if (claim.isEmpty()) {
 			if (repository.findCompanionBodyByName(databaseName).isPresent())
 				throw new IllegalStateException("Deterministic companion name is already occupied without an ownership claim");
-			CompanionCreationClaim reservation = new CompanionCreationClaim(request.ownerPlayerId(), databaseName, hostAccountId, hostAccountName, null);
+			CompanionCreationClaim reservation = new CompanionCreationClaim(request.ownerPlayerId(), databaseName, hostAccountId, hostAccountName, null,
+				request.blueprint());
 			repository.reserveCreation(reservation);
 			claim = Optional.of(reservation);
 		}
@@ -42,7 +43,7 @@ public final class CompanionCreationService {
 				.orElseThrow(() -> new IllegalStateException("Claimed companion player body is missing"));
 		} else {
 			body = repository.findCompanionBodyByName(databaseName)
-				.orElseGet(() -> playerCreationGateway.create(request, databaseName, hostAccountId, hostAccountName));
+				.orElseGet(() -> playerCreationGateway.create(exactClaim.creationRequest(request.race(), request.gender()), databaseName, hostAccountId, hostAccountName));
 		}
 		CompanionBinding binding = repository.finalizeCreation(exactClaim, body);
 		CompanionPersistentState state = new CompanionPersistentState(binding, Optional.empty());

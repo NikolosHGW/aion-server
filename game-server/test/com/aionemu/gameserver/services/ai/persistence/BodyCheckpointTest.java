@@ -5,6 +5,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class BodyCheckpointTest {
+	@Test void failedProfileMutationSavesPreMutationStateAndSuccessfulOneUsesNewState() {
+		var failed = new BodyCheckpoint<String>(true); failed.activate();
+		failed.protectMutation(() -> "valid");
+		failed.save(() -> "partially-mutated", value -> assertEquals("valid", value));
+		var success = new BodyCheckpoint<String>(true); success.activate();
+		success.protectMutation(() -> "old"); success.mutationSucceeded();
+		success.save(() -> "new", value -> assertEquals("new", value));
+	}
 	@Test void failureRetainsExactSnapshotAndSuccessIsIdempotent() {
 		var checkpoint = new BodyCheckpoint<String>(true);
 		var freezes = new AtomicInteger();

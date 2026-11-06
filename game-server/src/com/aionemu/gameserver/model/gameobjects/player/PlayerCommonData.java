@@ -438,6 +438,24 @@ public class PlayerCommonData extends CreatureTemplate {
 		setExp(DataManager.PLAYER_EXPERIENCE_TABLE.getStartExpForLevel(level));
 	}
 
+	/**
+	 * Bookkeeping for the separately authorized companion progression gateway. This is not earned XP:
+	 * no level-up rewards, quest completion, faction hooks or online state changes are performed.
+	 * The gateway owns the lease and reconciles ordinary skills/stats. Connected or online actors are rejected here too.
+	 */
+	public void synchronizeCompanionProfile(Player detachedActor, int targetLevel, PlayerClass targetClass) {
+		if (detachedActor == null || detachedActor.getCommonData() != this || detachedActor.getClientConnection() != null || online
+			|| targetLevel < 1 || targetLevel >= DataManager.PLAYER_EXPERIENCE_TABLE.getMaxLevel()
+			|| targetClass == null || targetClass.isStartingClass() != (targetLevel < 10))
+			throw new IllegalArgumentException("Invalid server-controlled companion progression");
+		this.playerClass = targetClass;
+		this.level = targetLevel;
+		this.exp = DataManager.PLAYER_EXPERIENCE_TABLE.getStartExpForLevel(targetLevel);
+		this.isDaeva = targetLevel >= 10;
+		this.noExp = true;
+		updateMaxRepose();
+	}
+
 	public String getNote() {
 		return note;
 	}

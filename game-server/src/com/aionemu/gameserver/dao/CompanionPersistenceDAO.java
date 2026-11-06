@@ -5,9 +5,11 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Optional;
+import java.util.Objects;
 
 import com.aionemu.commons.database.DatabaseFactory;
 import com.aionemu.gameserver.services.ai.creation.CompanionBodyRecord;
+import com.aionemu.gameserver.services.ai.creation.CompanionBlueprint;
 import com.aionemu.gameserver.services.ai.creation.CompanionCreationClaim;
 import com.aionemu.gameserver.services.ai.persistence.CompanionBinding;
 import com.aionemu.gameserver.services.ai.persistence.CompanionPersistenceException;
@@ -30,14 +32,14 @@ public final class CompanionPersistenceDAO implements CompanionPersistenceReposi
 		ON DUPLICATE KEY UPDATE companion_player_id = VALUES(companion_player_id), role = VALUES(role)
 		""";
 	private static final String LOAD_CLAIM_QUERY = """
-		SELECT owner_player_id, body_name, host_account_id, host_account_name, companion_player_id
+		SELECT owner_player_id, body_name, host_account_id, host_account_name, companion_player_id, blueprint, display_name
 		FROM ai_companion_creation_claims
 		WHERE owner_player_id = ?
 		""";
 	private static final String LOAD_CLAIM_FOR_UPDATE_QUERY = LOAD_CLAIM_QUERY + " FOR UPDATE";
 	private static final String INSERT_CLAIM_QUERY = """
-		INSERT INTO ai_companion_creation_claims (owner_player_id, body_name, host_account_id, host_account_name)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO ai_companion_creation_claims (owner_player_id, body_name, host_account_id, host_account_name, blueprint, display_name)
+		VALUES (?, ?, ?, ?, ?, ?)
 		""";
 	private static final String LOAD_BODY_BY_ID_QUERY = bodyQuery("p.id = ?");
 	private static final String LOAD_BODY_BY_NAME_QUERY = bodyQuery("p.name = ?");
@@ -127,8 +129,13 @@ public final class CompanionPersistenceDAO implements CompanionPersistenceReposi
 			statement.setString(2, claim.databaseName());
 			statement.setInt(3, claim.hostAccountId());
 			statement.setString(4, claim.hostAccountName());
+			statement.setString(5, claim.blueprint() == null ? null : claim.blueprint().encode());
+			statement.setString(6, claim.blueprint() == null ? null : claim.blueprint().displayName());
 			statement.executeUpdate();
 		} catch (SQLException | RuntimeException e) {
+			if (e instanceof SQLException sql && sql.getErrorCode() == 1062
+				&& sql.getMessage().contains("ai_companion_creation_claims_display_unique"))
+				throw new IllegalArgumentException("This AI nickname is already used; choose another nickname", e);
 			throw new CompanionPersistenceException("Could not reserve companion creation for owner " + claim.ownerPlayerId(), e);
 		}
 	}
@@ -322,13 +329,17 @@ public final class CompanionPersistenceDAO implements CompanionPersistenceReposi
 
 	private static CompanionCreationClaim readClaim(ResultSet result) throws SQLException {
 		Integer companionId = (Integer) result.getObject("companion_player_id");
+		CompanionBlueprint blueprint = CompanionBlueprint.decode(result.getString("blueprint"));
+		if (!Objects.equals(result.getString("display_name"), blueprint == null ? null : blueprint.displayName()))
+			throw new SQLException("Companion display name does not match immutable blueprint");
 		return new CompanionCreationClaim(result.getInt("owner_player_id"), result.getString("body_name"), result.getInt("host_account_id"),
-			result.getString("host_account_name"), companionId);
+			result.getString("host_account_name"), companionId, blueprint);
 	}
 
 	private static boolean sameClaim(CompanionCreationClaim expected, CompanionCreationClaim actual) {
 		return expected.ownerPlayerId() == actual.ownerPlayerId() && expected.databaseName().equals(actual.databaseName())
 			&& expected.hostAccountId() == actual.hostAccountId() && expected.hostAccountName().equals(actual.hostAccountName())
+			&& Objects.equals(expected.blueprint(), actual.blueprint())
 			&& (expected.companionPlayerId() == null || expected.companionPlayerId().equals(actual.companionPlayerId()));
 	}
 

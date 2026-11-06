@@ -25,10 +25,11 @@ public final class DefaultCompanionPlayerCreationGateway implements CompanionPla
 		commonData.setName(databaseName);
 		commonData.setGender(Gender.valueOf(request.gender()));
 		commonData.setRace(Race.valueOf(request.race()));
-		commonData.setPlayerClass(PlayerClass.valueOf(CompanionCreationPolicy.STARTING_CLASS));
+		commonData.setPlayerClass(request.blueprint() == null ? PlayerClass.valueOf(CompanionCreationPolicy.STARTING_CLASS)
+			: request.blueprint().classAt(1));
 		commonData.setLevel(1);
-		PlayerAppearance appearance = new PlayerAppearance();
-		appearance.setHeightScale(1.0f);
+		PlayerAppearance appearance = request.blueprint() == null ? new PlayerAppearance() : request.blueprint().appearance();
+		if (request.blueprint() == null) appearance.setHeightScale(1.0f);
 		PlayerAccountData accountData = new PlayerAccountData(commonData, appearance);
 		Player player = PlayerService.newPlayer(accountData, hostAccount);
 		if (!PlayerService.storeNewPlayer(player, hostAccountName, hostAccountId))
@@ -37,6 +38,6 @@ public final class DefaultCompanionPlayerCreationGateway implements CompanionPla
 		accountData.setCreationDate(createdAt);
 		PlayerService.storeCreationTime(objectId, createdAt);
 		return new CompanionBodyRecord(objectId, databaseName, hostAccountId, hostAccountName, request.race(), request.gender(),
-			CompanionCreationPolicy.STARTING_CLASS, false, true);
+			commonData.getPlayerClass().name(), false, true);
 	}
 }

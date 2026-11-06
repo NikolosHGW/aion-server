@@ -17,6 +17,24 @@ import com.aionemu.gameserver.services.ai.persistence.PersistedGoalIntent;
 class CompanionCreationServiceTest {
 
 	@Test
+	void recoveryUsesFrozenAppearanceClassAndNameDespiteChangedRequest() {
+		FakeRepository repository = new FakeRepository();
+		var frozen = CompanionBlueprintTest.blueprint("Vasya");
+		repository.reserveCreation(new CompanionCreationClaim(10, CompanionCreationPolicy.databaseName(10), 13, "Test", null, frozen));
+		var gateway = new FakeGateway(repository);
+		var service = new CompanionCreationService(repository, gateway);
+		var changed = CompanionBlueprintTest.blueprint("Newname");
+		var result = service.create(new CompanionCreationRequest(10, "ELYOS", "FEMALE", changed), 13, "Test");
+		assertEquals(CompanionCreationResult.Status.RECOVERED, result.status());
+		assertEquals(frozen, gateway.lastRequest.blueprint());
+		assertEquals("PRIEST", result.body().playerClass());
+		assertEquals(frozen, repository.claims.get(10).blueprint());
+		// Owner gender is unrelated to the chosen template gender on later calls.
+		assertEquals(result.body(), service.create(new CompanionCreationRequest(10, "ELYOS", "MALE"), 13, "Test").body());
+		assertEquals(1, gateway.createCount);
+	}
+
+	@Test
 	void firstCreatePersistsOneBodyAndRepeatReturnsSameIdentity() {
 		FakeRepository repository = new FakeRepository();
 		FakeGateway gateway = new FakeGateway(repository);
@@ -70,6 +88,7 @@ class CompanionCreationServiceTest {
 
 		private final FakeRepository repository;
 		private int createCount;
+		private CompanionCreationRequest lastRequest;
 
 		private FakeGateway(FakeRepository repository) {
 			this.repository = repository;
@@ -78,8 +97,9 @@ class CompanionCreationServiceTest {
 		@Override
 		public CompanionBodyRecord create(CompanionCreationRequest request, String databaseName, int hostAccountId, String hostAccountName) {
 			createCount++;
+			lastRequest = request;
 			CompanionBodyRecord body = new CompanionBodyRecord(100 + request.ownerPlayerId(), databaseName, hostAccountId, hostAccountName,
-				request.race(), request.gender(), "WARRIOR", false, true);
+				request.race(), request.gender(), request.blueprint() == null ? "WARRIOR" : request.blueprint().classAt(1).name(), false, true);
 			repository.putBody(body);
 			return body;
 		}
@@ -123,7 +143,7 @@ class CompanionCreationServiceTest {
 				&& state.binding().ownerPlayerId() != claim.ownerPlayerId()))
 				throw new IllegalStateException("companion already owned");
 			claims.put(claim.ownerPlayerId(), new CompanionCreationClaim(claim.ownerPlayerId(), claim.databaseName(), claim.hostAccountId(),
-				claim.hostAccountName(), body.playerId()));
+				claim.hostAccountName(), body.playerId(), claim.blueprint()));
 			CompanionBinding binding = CompanionCreationService.binding(claim.ownerPlayerId(), body.playerId());
 			states.put(claim.ownerPlayerId(), new CompanionPersistentState(binding, Optional.empty()));
 			return binding;

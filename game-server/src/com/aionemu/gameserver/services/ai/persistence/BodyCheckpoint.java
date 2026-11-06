@@ -13,6 +13,16 @@ public final class BodyCheckpoint<T> {
 
 	public BodyCheckpoint(boolean persistent) { this.persistent = persistent; }
 	public void activate() { activated = true; }
+	/** Keep the last valid state if a rare profile transition fails halfway through native skill effects. */
+	public void protectMutation(Supplier<T> freeze) {
+		if (!persistent || !activated) return;
+		if (snapshot != null || committed) throw new IllegalStateException("Checkpoint already frozen");
+		snapshot = java.util.Objects.requireNonNull(freeze.get());
+	}
+	public void mutationSucceeded() {
+		if (committed) throw new IllegalStateException("Checkpoint already committed");
+		snapshot = null;
+	}
 	public void save(Supplier<T> freeze, Consumer<T> store) {
 		if (!persistent || !activated || committed) return;
 		if (snapshot == null) snapshot = java.util.Objects.requireNonNull(freeze.get());

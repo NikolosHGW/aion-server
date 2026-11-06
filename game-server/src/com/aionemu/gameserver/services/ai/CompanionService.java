@@ -15,6 +15,11 @@ import org.slf4j.LoggerFactory;
 import com.aionemu.gameserver.configs.main.AIConfig;
 import com.aionemu.gameserver.configs.main.GeoDataConfig;
 import com.aionemu.gameserver.dao.CompanionPersistenceDAO;
+import com.aionemu.gameserver.dao.CompanionSourceDAO;
+import com.aionemu.gameserver.services.ai.creation.CompanionBlueprint;
+import com.aionemu.gameserver.services.ai.creation.CompanionAppearanceSnapshot;
+import com.aionemu.gameserver.services.ai.creation.CompanionCreationClaim;
+import com.aionemu.gameserver.services.ai.progression.CompanionProgression;
 import com.aionemu.gameserver.dao.CompanionBodyDAO;
 import com.aionemu.gameserver.geoEngine.collision.IgnoreProperties;
 import com.aionemu.gameserver.geoEngine.math.Vector3f;
@@ -103,15 +108,42 @@ public final class CompanionService {
 	}
 
 	public CompanionCreationResult create(Player owner) {
-		return withOwnershipOperation(owner, () -> createOwned(owner));
+		return create(owner, null, null, null);
 	}
 
-	private CompanionCreationResult createOwned(Player owner) {
+	public CompanionCreationResult create(Player owner, String sourceName, String nickname, String specialization) {
+		return withOwnershipOperation(owner, () -> createOwned(owner, sourceName, nickname, specialization));
+	}
+
+	public List<CompanionSourceDAO.Source> sources(Player owner) {
+		validateCreationOwner(owner);
+		if (!AIConfig.COMPANION_PROFILE_ENABLED) throw new IllegalStateException("Companion profiles are disabled");
+		return new CompanionSourceDAO().list(owner.getAccount().getId());
+	}
+
+	private void validateCreationOwner(Player owner) {
 		CompanionPreflight.requireEnabled(AIConfig.ENABLED, AIConfig.COMPANIONS_ENABLED);
 		requireCreationConfiguration();
 		CompanionPreflight.validateOwner(owner.getClientConnection() != null,
 			World.getInstance().findVisibleObject(owner.getObjectId()) == owner, owner.isSpawned(), runtime.isServerControlled(owner));
-		CompanionCreationResult result = creationService.create(creationRequest(owner), AIConfig.COMPANION_CREATION_HOST_ACCOUNT_ID,
+	}
+
+	private CompanionCreationResult createOwned(Player owner, String sourceName, String nickname, String specialization) {
+		validateCreationOwner(owner);
+		var request = creationRequest(owner);
+		var claim = persistenceRepository.loadCreationClaim(owner.getObjectId());
+		if (claim.isPresent()) {
+			if (claim.get().blueprint() != null && !AIConfig.COMPANION_PROFILE_ENABLED)
+				throw new IllegalStateException("Companion profiles are disabled");
+			// Recovery uses the frozen claim, even if the original character no longer exists.
+		} else if (AIConfig.COMPANION_PROFILE_ENABLED) {
+			CompanionBlueprint blueprint = new CompanionSourceDAO().snapshot(owner.getAccount().getId(), sourceName, nickname, specialization,
+				owner.getRace().name());
+			request = new CompanionCreationRequest(owner.getObjectId(), blueprint.race(), blueprint.gender(), blueprint);
+		} else if (sourceName != null) {
+			throw new IllegalStateException("Companion profiles are disabled");
+		}
+		CompanionCreationResult result = creationService.create(request, AIConfig.COMPANION_CREATION_HOST_ACCOUNT_ID,
 			AIConfig.COMPANION_CREATION_HOST_ACCOUNT_NAME);
 		log.info(
 			"AI_COMPANION_CREATION action=CREATE result={} ownerObjectId={} companionObjectId={} companionDbName={} hostAccountId={} persistence=true",
@@ -159,6 +191,8 @@ public final class CompanionService {
 		int accountId;
 		int objectId;
 		String identityOrigin;
+		CompanionBlueprint blueprint;
+		CompanionCreationClaim profileClaim;
 		if (AIConfig.COMPANION_CREATION_ENABLED) {
 			requireCreationConfiguration();
 			CompanionBodyRecord body = creationService.resolveOwnedBody(creationRequest(owner), AIConfig.COMPANION_CREATION_HOST_ACCOUNT_ID,
@@ -166,6 +200,10 @@ public final class CompanionService {
 			accountId = body.accountId();
 			objectId = body.playerId();
 			identityOrigin = "PRODUCT_CREATED";
+			profileClaim = persistenceRepository.loadCreationClaim(owner.getObjectId()).orElseThrow();
+			blueprint = profileClaim.blueprint();
+			if (blueprint != null && !AIConfig.COMPANION_PROFILE_ENABLED)
+				throw new IllegalStateException("Companion profiles are disabled");
 		} else {
 			if (!owner.isStaff())
 				throw new IllegalStateException("Personal companion creation must be enabled; the legacy template is staff-only");
@@ -174,6 +212,8 @@ public final class CompanionService {
 			accountId = AIConfig.COMPANION_TEMPLATE_ACCOUNT_ID;
 			objectId = AIConfig.COMPANION_TEMPLATE_CHARACTER_ID;
 			identityOrigin = "LEGACY_TEMPLATE";
+			blueprint = null;
+			profileClaim = null;
 		}
 		sessions.claimBody(lease, objectId);
 		// One body per materialization; no shared account warehouse or sibling characters.
@@ -184,7 +224,7 @@ public final class CompanionService {
 			throw new IllegalArgumentException("Character " + objectId + " does not belong to configured companion account " + accountId);
 
 		String templateDatabaseName = templateData.getPlayerCommonData().getName();
-		String runtimeName = AIConfig.SYNTHETIC_RUNTIME_NAME_PREFIX + templateDatabaseName;
+		String runtimeName = blueprint == null ? AIConfig.SYNTHETIC_RUNTIME_NAME_PREFIX + templateDatabaseName : blueprint.displayName();
 		SyntheticPlayerPreflight.validate(objectId, runtimeName, AIConfig.SYNTHETIC_RUNTIME_NAME_MAX_LENGTH, occupancy(null));
 		if (templateData.getPlayerCommonData().isOnline())
 			throw new IllegalStateException("Companion template character is marked online in the database");
@@ -196,6 +236,9 @@ public final class CompanionService {
 			validateLoadedPlayer(companion);
 			if (identityOrigin.equals("PRODUCT_CREATED"))
 				CompanionBodyDAO.verifyLoaded(companion);
+			if (blueprint != null && !CompanionAppearanceSnapshot.encode(companion.getPlayerAppearance())
+				.equals(CompanionAppearanceSnapshot.encode(blueprint.appearance())))
+				throw new IllegalStateException("Companion appearance differs from its creation snapshot");
 			WorldPosition spawnPosition = buildAndValidateSpawnPosition(companion, owner);
 			companion.setPosition(spawnPosition);
 			companion.setServerControlledDisplayName(runtimeName);
@@ -217,20 +260,32 @@ public final class CompanionService {
 				() -> sessions.usable(lease) && AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED,
 				System::currentTimeMillis, body::getX, body::getY, body::getZ, () -> body.getMoveController().isInMove());
 			BodyCheckpoint<CompanionBodyDAO.Snapshot> bodyCheckpoint = new BodyCheckpoint<>(identityOrigin.equals("PRODUCT_CREATED"));
+			CompanionProgression progression = blueprint == null ? null : new CompanionProgression(owner, body, profileClaim,
+				() -> sessions.usable(lease) && AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED && AIConfig.COMPANION_PROFILE_ENABLED
+					&& AIConfig.COMPANION_CREATION_ENABLED && owner.getClientConnection() != null && owner.isSpawned()
+					&& World.getInstance().getPlayer(owner.getObjectId()) == owner && !runtime.isServerControlled(owner));
+			if (progression != null && progression.ready()) progression.synchronize();
 			CompanionController controller = new CompanionController(new PlayerCompanionContext(owner, companion),
 				movementActions, settings, reason -> dismissFromRuntime(lease, reason), System::currentTimeMillis, () -> {
 					movementActions.poll();
+					if (progression != null && progression.needsSynchronization()) {
+						if (!progression.ready()) return;
+						bodyCheckpoint.protectMutation(() -> CompanionBodyDAO.snapshot(owner.getObjectId(), body));
+						progression.synchronize();
+						bodyCheckpoint.mutationSucceeded();
+					}
 					maintainGoalSession(lease.session());
 					executionRuntime.pollIfDue();
 					combatController.tick();
 				}, combatController::isFollowCatchUpSuppressed);
 			controlledPlayer = new ServerControlledPlayer(companion, templateDatabaseName, runtimeName, SyntheticPlayerRole.COMPANION,
 				sessions.guard(lease, controller, () -> lease.session().controlledPlayer().isActive()),
-				() -> AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED && sessions.usable(lease),
+				() -> AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED && sessions.usable(lease)
+					&& (progression == null || AIConfig.COMPANION_PROFILE_ENABLED && AIConfig.COMPANION_CREATION_ENABLED),
 				reason -> dismissFromRuntime(lease, reason));
 			CompanionSession newSession = new CompanionSession(owner, controlledPlayer, controller,
 				new CompanionGoalSession(owner.getObjectId(), companion.getObjectId()), executionRuntime, combatSessionId, combatController,
-				new CompanionPersistenceRuntime(), lease, movementActions, bodyCheckpoint);
+				new CompanionPersistenceRuntime(), lease, movementActions, bodyCheckpoint, progression);
 			ServerControlledPlayer finalControlledPlayer = controlledPlayer;
 			sessions.publish(lease, newSession);
 
@@ -591,6 +646,7 @@ public final class CompanionService {
 			+ ", " + current.controller().getMovementDiagnostics()
 			+ ", " + current.movementActions().status()
 			+ ", bodyCheckpointPending=" + current.bodyCheckpoint().isPending()
+			+ (current.progression() == null ? ", profile=LEGACY" : ", " + current.progression().status())
 			+ ", combatFeatureEnabled=" + isCombatFeatureEnabled()
 			+ ", " + current.combatController().status()
 			+ ", questGoalFeatureEnabled=" + AIConfig.COMPANION_QUEST_GOALS_ENABLED
@@ -617,8 +673,10 @@ public final class CompanionService {
 			return runtimeStatus + ", productCreationEnabled=true, owned=false";
 		CompanionBodyRecord body = creationService.resolveOwnedBody(creationRequest(requester), AIConfig.COMPANION_CREATION_HOST_ACCOUNT_ID,
 			AIConfig.COMPANION_CREATION_HOST_ACCOUNT_NAME);
+		CompanionBlueprint blueprint = persistenceRepository.loadCreationClaim(requester.getObjectId()).orElseThrow().blueprint();
 		return runtimeStatus + ", productCreationEnabled=true, owned=true, ownedCompanionObjectId=" + body.playerId()
-			+ ", ownedCompanionDbName=" + body.databaseName() + ", companionHostAccountId=" + body.accountId();
+			+ ", ownedCompanionDbName=" + body.databaseName() + ", companionHostAccountId=" + body.accountId()
+			+ (blueprint == null ? ", profile=LEGACY" : ", displayName=" + blueprint.displayName() + ", permanentClass=" + blueprint.playerClass());
 	}
 
 	private void maintainGoalSession(CompanionSession current) {
@@ -1152,7 +1210,7 @@ public final class CompanionService {
 	private record CompanionSession(Player owner, ServerControlledPlayer controlledPlayer, CompanionController controller,
 		CompanionGoalSession goalSession, CompanionQuestExecutionRuntime executionRuntime, long combatSessionId,
 		CompanionCombatController combatController, CompanionPersistenceRuntime persistenceRuntime, Lease<Player, CompanionSession> lease,
-		TrackedMovementGateway movementActions, BodyCheckpoint<CompanionBodyDAO.Snapshot> bodyCheckpoint) {
+		TrackedMovementGateway movementActions, BodyCheckpoint<CompanionBodyDAO.Snapshot> bodyCheckpoint, CompanionProgression progression) {
 	}
 
 	private static final class SingletonHolder {

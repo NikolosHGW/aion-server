@@ -11,7 +11,8 @@ public class Companion extends AdminCommand {
 
 	public Companion() {
 		super("companion", "Controls your personal companion.", """
-			<create> - Create your persistent personal companion once; does not summon it.
+			<sources> - List your account characters as appearance/class templates.
+			<create SourceName [Nickname|-] [Specialization]> - Create once; '-' keeps the source nickname. Basic classes need specialization.
 			<summon> - Spawn your already-created persistent companion.
 			<follow> - Resume following you.
 			<stay> - Stop and remain in the world.
@@ -27,12 +28,20 @@ public class Companion extends AdminCommand {
 	public void execute(Player admin, String... params) {
 		try {
 			executeOwned(admin, params);
-		} catch (IllegalStateException e) {
+		} catch (IllegalStateException | IllegalArgumentException e) {
 			sendInfo(admin, e.getMessage());
 		}
 	}
 
 	private void executeOwned(Player admin, String... params) {
+		if (params.length >= 2 && params.length <= 4 && params[0].equalsIgnoreCase("create")) {
+			var service = CompanionService.getInstance();
+			var result = service.create(admin, params[1], params.length >= 3 && !params[2].equals("-") ? params[2] : null,
+				params.length == 4 ? params[3] : null);
+			sendInfo(admin, "Companion create: " + result.status() + ". Use //companion summon.");
+			sendInfo(admin, service.getStatus(admin));
+			return;
+		}
 		if (params.length == 2 && params[0].equalsIgnoreCase("assist")) {
 			executeAssist(admin, params[1]);
 			return;
@@ -48,6 +57,10 @@ public class Companion extends AdminCommand {
 
 		CompanionService service = CompanionService.getInstance();
 		switch (params[0].toLowerCase()) {
+			case "sources" -> {
+				for (var source : service.sources(admin))
+					sendInfo(admin, source.name() + " | " + source.race() + " | " + source.gender() + " | " + source.playerClass());
+			}
 			case "create" -> {
 				var result = service.create(admin);
 				sendInfo(admin, "Companion create: " + result.status() + ", companionObjectId=" + result.body().playerId()
