@@ -36,6 +36,9 @@ public class AIConfig {
 	@Property(key = "ai.companions.profile.enabled", defaultValue = "false")
 	public static boolean COMPANION_PROFILE_ENABLED;
 
+	@Property(key = "ai.companions.combat.skills.enabled", defaultValue = "false")
+	public static boolean COMPANION_SKILLS_ENABLED;
+
 	@Property(key = "ai.companions.creation.host_account_id", defaultValue = "0")
 	public static int COMPANION_CREATION_HOST_ACCOUNT_ID;
 

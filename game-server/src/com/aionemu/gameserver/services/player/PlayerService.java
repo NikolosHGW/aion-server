@@ -16,6 +16,7 @@ import com.aionemu.gameserver.dataholders.PlayerInitialData.LocationData;
 import com.aionemu.gameserver.dataholders.PlayerInitialData.PlayerCreationData;
 import com.aionemu.gameserver.dataholders.PlayerInitialData.PlayerCreationData.ItemType;
 import com.aionemu.gameserver.model.account.Account;
+import com.aionemu.gameserver.model.PlayerClass;
 import com.aionemu.gameserver.model.account.PlayerAccountData;
 import com.aionemu.gameserver.model.gameobjects.Item;
 import com.aionemu.gameserver.model.gameobjects.Persistable.PersistentState;
@@ -117,6 +118,12 @@ public class PlayerService {
 	/** Closed AI-host accounts do not lend account-wide entitlements or progress to their bodies. */
 	public static Player getServerControlledPlayer(int playerObjId, Account account) {
 		return getPlayer(playerObjId, account, false, false);
+	}
+
+	/** Authorized profile bodies restore their saved level before stats/effects and saved HP/MP are loaded. */
+	public static Player getServerControlledPlayer(int playerObjId, Account account, PlayerClass permanentClass) {
+		account.getPlayerAccountData(playerObjId).getPlayerCommonData().restoreCompanionProfileLevel(permanentClass);
+		return getServerControlledPlayer(playerObjId, account);
 	}
 
 	private static Player getPlayer(int playerObjId, Account account, boolean initializeMissingPersistentData, boolean loadAccountState) {

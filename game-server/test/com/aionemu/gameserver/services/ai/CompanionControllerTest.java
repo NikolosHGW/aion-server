@@ -16,6 +16,20 @@ import com.aionemu.gameserver.services.ai.PlayerActionGateway.MovementRejectionR
 import com.aionemu.gameserver.services.ai.PlayerActionGateway.MovementResult;
 
 class CompanionControllerTest {
+	@Test void nativeCastPreventsFollowFromMovingOrCancellingStationaryCaster() {
+		var casting = new java.util.concurrent.atomic.AtomicBoolean(true);
+		var controller = new CompanionController(context, gateway, new CompanionFollowSettings(6, 3, 2, 400, 1000),
+			removalReason::set, clock::get, () -> {}, () -> false, casting::get);
+		context.distance = 2;
+		controller.tick();
+		context.distance = 8;
+		controller.tick();
+		assertEquals(0, gateway.stopCount);
+		assertEquals(0, gateway.startCount);
+		casting.set(false);
+		controller.tick();
+		assertEquals(1, gateway.startCount);
+	}
 
 	private final TestContext context = new TestContext();
 	private final TestGateway gateway = new TestGateway();

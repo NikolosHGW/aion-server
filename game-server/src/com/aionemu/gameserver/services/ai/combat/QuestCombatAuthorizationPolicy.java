@@ -49,6 +49,14 @@ public final class QuestCombatAuthorizationPolicy {
 	}
 
 	public Decision authorize(OwnerAttackSignal signal, Npc target) {
+		return authorize(signal, target, false, false);
+	}
+
+	public Decision authorizeSkill(OwnerAttackSignal signal, Npc target, boolean ownsPendingLethalHit) {
+		return authorize(signal, target, true, ownsPendingLethalHit);
+	}
+
+	private Decision authorize(OwnerAttackSignal signal, Npc target, boolean nativeSkillRange, boolean ownsPendingLethalHit) {
 		if (!isQuestTargetTemplate(target.getNpcId()))
 			return Decision.reject("TARGET_NOT_QUEST_OBJECTIVE");
 		if (!featureEnabled.getAsBoolean())
@@ -81,7 +89,7 @@ public final class QuestCombatAuthorizationPolicy {
 			|| owner.getInstanceId() != companion.getInstanceId() || owner.getInstanceId() != target.getInstanceId())
 			return live.rejectAfterLive("MAP_OR_INSTANCE_MISMATCH");
 		if (!target.isSpawned() || World.getInstance().findVisibleObject(target.getObjectId()) != target || target.isDead()
-			|| target.getLifeStats().isAboutToDie() || target.isInvulnerable())
+			|| target.getLifeStats().isAboutToDie() && !ownsPendingLethalHit || target.isInvulnerable())
 			return live.rejectAfterLive("TARGET_NOT_LIVE");
 		CreatureType targetType = target.getType(companion);
 		if (!owner.isEnemy(target) || !companion.isEnemy(target)
@@ -91,7 +99,7 @@ public final class QuestCombatAuthorizationPolicy {
 			|| !companion.getKnownList().sees(target))
 			return live.rejectAfterLive("TARGET_NOT_VISIBLE");
 		float attackRange = 1 + companion.getGameStats().getAttackRange().getCurrent() / 1000f;
-		if (!PositionUtil.isInAttackRange(companion, target, attackRange))
+		if (!nativeSkillRange && !PositionUtil.isInAttackRange(companion, target, attackRange))
 			return live.rejectAfterLive("OUT_OF_RANGE");
 		if (!GeoService.getInstance().canSee(owner, target) || !GeoService.getInstance().canSee(companion, target))
 			return live.rejectAfterLive("NO_LINE_OF_SIGHT");

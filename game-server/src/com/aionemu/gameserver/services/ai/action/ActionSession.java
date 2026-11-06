@@ -116,6 +116,15 @@ public final class ActionSession {
 		if (active != null) cancel(active.id(), "session-closed");
 	}
 
+	/** Completion belongs to one exact action; late callbacks cannot finish its successor. */
+	public synchronized Receipt finish(Id id, State state, String reason) {
+		if (!state.terminal()) throw new IllegalArgumentException("Terminal outcome required");
+		if (active == null || !active.id().equals(id)) return null;
+		if (!active.state().terminal())
+			active = remember(new Receipt(id, active.intent(), state, reason, active.deadline()));
+		return active;
+	}
+
 	public synchronized Receipt current() { return active; }
 	public synchronized int retainedReceipts() { return history.size(); }
 

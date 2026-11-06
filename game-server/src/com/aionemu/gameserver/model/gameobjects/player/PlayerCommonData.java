@@ -456,6 +456,19 @@ public class PlayerCommonData extends CreatureTemplate {
 		updateMaxRepose();
 	}
 
+	/** Restore a persisted AI profile before constructing stats, without the human ascension-quest cap at exact level 10. */
+	public void restoreCompanionProfileLevel(PlayerClass permanentClass) {
+		if (online || World.getInstance().findVisibleObject(playerObjId) != null || permanentClass == null || permanentClass.isStartingClass())
+			throw new IllegalArgumentException("Profile restoration requires a detached companion");
+		int savedLevel = DataManager.PLAYER_EXPERIENCE_TABLE.getLevelForExp(exp);
+		if (savedLevel < 1 || playerClass != (savedLevel < 10 ? permanentClass.getStartingClass() : permanentClass))
+			throw new IllegalArgumentException("Saved companion class does not match its permanent profile");
+		level = savedLevel;
+		isDaeva = savedLevel >= 10;
+		noExp = true;
+		updateMaxRepose();
+	}
+
 	public String getNote() {
 		return note;
 	}

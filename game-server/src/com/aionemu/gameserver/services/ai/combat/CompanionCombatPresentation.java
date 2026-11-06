@@ -17,14 +17,18 @@ public final class CompanionCombatPresentation {
 	}
 
 	public static void prepareBasicAttack(Player companion, Creature target) {
-		if (companion.getTarget() != target) {
-			companion.setTarget(target);
-			PacketSendUtility.broadcastToSightedPlayers(companion, new SM_TARGET_UPDATE(companion));
-		}
+		selectTarget(companion, target);
 		if (!companion.isInState(CreatureState.WEAPON_EQUIPPED)) {
 			companion.setState(CreatureState.WEAPON_EQUIPPED);
 			PacketSendUtility.broadcastToSightedPlayers(companion,
 				new SM_EMOTION(companion, EmotionType.ATTACKMODE_IN_STANDING, 0, target.getObjectId()));
+		}
+	}
+
+	public static void selectTarget(Player companion, Creature target) {
+		if (companion.getTarget() != target) {
+			companion.setTarget(target);
+			PacketSendUtility.broadcastToSightedPlayers(companion, new SM_TARGET_UPDATE(companion));
 		}
 	}
 

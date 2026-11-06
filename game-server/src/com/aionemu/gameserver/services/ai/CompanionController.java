@@ -23,6 +23,7 @@ public final class CompanionController implements ServerPlayerController {
 	private final LongSupplier currentTimeMillis;
 	private final Runnable runtimeMaintenance;
 	private final BooleanSupplier combatCatchUpSuppressed;
+	private final BooleanSupplier actionHoldsMovement;
 	private final CompanionOwnerBreadcrumbTrail ownerTrail = new CompanionOwnerBreadcrumbTrail();
 	private CompanionMode mode = CompanionMode.FOLLOWING;
 	private boolean followRequested = true;
@@ -60,6 +61,11 @@ public final class CompanionController implements ServerPlayerController {
 
 	CompanionController(CompanionContext context, PlayerActionGateway gateway, CompanionFollowSettings settings, Consumer<String> removalRequest,
 			LongSupplier currentTimeMillis, Runnable runtimeMaintenance, BooleanSupplier combatCatchUpSuppressed) {
+		this(context, gateway, settings, removalRequest, currentTimeMillis, runtimeMaintenance, combatCatchUpSuppressed, () -> false);
+	}
+
+	CompanionController(CompanionContext context, PlayerActionGateway gateway, CompanionFollowSettings settings, Consumer<String> removalRequest,
+			LongSupplier currentTimeMillis, Runnable runtimeMaintenance, BooleanSupplier combatCatchUpSuppressed, BooleanSupplier actionHoldsMovement) {
 		this.context = context;
 		this.gateway = gateway;
 		this.settings = settings;
@@ -67,6 +73,7 @@ public final class CompanionController implements ServerPlayerController {
 		this.currentTimeMillis = currentTimeMillis;
 		this.runtimeMaintenance = runtimeMaintenance;
 		this.combatCatchUpSuppressed = combatCatchUpSuppressed;
+		this.actionHoldsMovement = actionHoldsMovement;
 	}
 
 	@Override
@@ -92,6 +99,11 @@ public final class CompanionController implements ServerPlayerController {
 		}
 		if (!followRequested) {
 			mode = CompanionMode.STAYING;
+			return;
+		}
+		// Native onStopMove also cancels casts. Do not repeatedly stop an already stationary caster.
+		if (actionHoldsMovement.getAsBoolean()) {
+			movementIssued = false;
 			return;
 		}
 		ownerTrail.sample(context.ownerMapId(), context.ownerInstanceId(), context.ownerX(), context.ownerY(), context.ownerZ(),
@@ -321,6 +333,8 @@ public final class CompanionController implements ServerPlayerController {
 	public synchronized CompanionMode getMode() {
 		return mode;
 	}
+
+	public synchronized boolean isFollowingRequested() { return followRequested && mode != CompanionMode.REMOVING; }
 
 	public synchronized String getLastBlockedReason() {
 		return currentRejection == null ? "" : currentRejection.reason().name();

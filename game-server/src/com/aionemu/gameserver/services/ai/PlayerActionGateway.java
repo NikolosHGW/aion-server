@@ -21,7 +21,8 @@ public interface PlayerActionGateway {
 
 	enum MovementIntent {
 		OWNER_OFFSET,
-		OWNER_BREADCRUMB
+		OWNER_BREADCRUMB,
+		COMBAT_APPROACH
 	}
 
 	enum MovementPhase {

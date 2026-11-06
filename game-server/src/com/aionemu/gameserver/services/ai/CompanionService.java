@@ -33,6 +33,7 @@ import com.aionemu.gameserver.services.ai.CompanionSessions.Lease;
 import com.aionemu.gameserver.services.ai.action.TrackedMovementGateway;
 import com.aionemu.gameserver.services.ai.persistence.BodyCheckpoint;
 import com.aionemu.gameserver.services.ai.combat.CombatActionGateway;
+import com.aionemu.gameserver.services.ai.combat.CompanionSkillGateway;
 import com.aionemu.gameserver.services.ai.combat.CombatContributionOwnerResolver;
 import com.aionemu.gameserver.services.ai.combat.CombatNpcAllowlist;
 import com.aionemu.gameserver.services.ai.combat.CompanionCombatController;
@@ -232,7 +233,8 @@ public final class CompanionService {
 		Player companion = null;
 		ServerControlledPlayer controlledPlayer = null;
 		try {
-			companion = PlayerService.getServerControlledPlayer(objectId, account);
+			companion = blueprint == null ? PlayerService.getServerControlledPlayer(objectId, account)
+				: PlayerService.getServerControlledPlayer(objectId, account, blueprint.advancedClass());
 			validateLoadedPlayer(companion);
 			if (identityOrigin.equals("PRODUCT_CREATED"))
 				CompanionBodyDAO.verifyLoaded(companion);
@@ -250,15 +252,23 @@ public final class CompanionService {
 			QuestCombatAuthorizationPolicy questAuthorizationPolicy = new QuestCombatAuthorizationPolicy(owner, companion, combatSessionId,
 				executionRuntime, this::isQuestCombatFeatureEnabled, combatSignalSource::isEnabled,
 				() -> AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS);
-			CombatActionGateway combatGateway = new DefaultCombatActionGateway(owner, companion, combatSessionId, contributionResolver,
+			DefaultCombatActionGateway basicGateway = new DefaultCombatActionGateway(owner, companion, combatSessionId, contributionResolver,
 				this::isCombatFeatureEnabled, combatSignalSource::isEnabled, System::currentTimeMillis, AIConfig.COMPANION_COMBAT_OWNER_SIGNAL_TTL_MS,
 				AIConfig.COMPANION_COMBAT_ALLOWED_NPC_IDS, questAuthorizationPolicy);
-			CompanionCombatController combatController = new CompanionCombatController(owner.getObjectId(), companion.getObjectId(), combatSessionId,
-				combatSignalSource, combatGateway, this::isCombatFeatureEnabled, System::currentTimeMillis, AIConfig.COMPANION_COMBAT_OWNER_SIGNAL_TTL_MS);
 			Player body = companion;
 			TrackedMovementGateway movementActions = new TrackedMovementGateway(new DefaultPlayerActionGateway(body, owner, true),
 				() -> sessions.usable(lease) && AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED,
 				System::currentTimeMillis, body::getX, body::getY, body::getZ, () -> body.getMoveController().isInMove());
+			CombatActionGateway combatGateway = blueprint == null ? basicGateway : new CompanionSkillGateway(owner, body,
+				blueprint.advancedClass(), basicGateway, basicGateway::allowsSkillTarget,
+				() -> AIConfig.COMPANION_SKILLS_ENABLED && AIConfig.COMPANION_PROFILE_ENABLED && AIConfig.COMPANION_CREATION_ENABLED,
+				() -> sessions.usable(lease) && isCombatFeatureEnabled() && combatSignalSource.isEnabled()
+					&& owner.getClientConnection() != null && !runtime.isServerControlled(owner)
+					&& contributionResolver.matches(body, owner, combatSessionId, true),
+				action -> lease.call(() -> { action.run(); return null; }), movementActions,
+				() -> lease.session() != null && lease.session().controller().isFollowingRequested());
+			CompanionCombatController combatController = new CompanionCombatController(owner.getObjectId(), body.getObjectId(), combatSessionId,
+				combatSignalSource, combatGateway, this::isCombatFeatureEnabled, System::currentTimeMillis, AIConfig.COMPANION_COMBAT_OWNER_SIGNAL_TTL_MS);
 			BodyCheckpoint<CompanionBodyDAO.Snapshot> bodyCheckpoint = new BodyCheckpoint<>(identityOrigin.equals("PRODUCT_CREATED"));
 			CompanionProgression progression = blueprint == null ? null : new CompanionProgression(owner, body, profileClaim,
 				() -> sessions.usable(lease) && AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED && AIConfig.COMPANION_PROFILE_ENABLED
@@ -269,6 +279,7 @@ public final class CompanionService {
 				movementActions, settings, reason -> dismissFromRuntime(lease, reason), System::currentTimeMillis, () -> {
 					movementActions.poll();
 					if (progression != null && progression.needsSynchronization()) {
+						combatGateway.stop("profile-synchronization");
 						if (!progression.ready()) return;
 						bodyCheckpoint.protectMutation(() -> CompanionBodyDAO.snapshot(owner.getObjectId(), body));
 						progression.synchronize();
@@ -277,7 +288,7 @@ public final class CompanionService {
 					maintainGoalSession(lease.session());
 					executionRuntime.pollIfDue();
 					combatController.tick();
-				}, combatController::isFollowCatchUpSuppressed);
+				}, combatController::isFollowCatchUpSuppressed, combatController::holdsMovement);
 			controlledPlayer = new ServerControlledPlayer(companion, templateDatabaseName, runtimeName, SyntheticPlayerRole.COMPANION,
 				sessions.guard(lease, controller, () -> lease.session().controlledPlayer().isActive()),
 				() -> AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED && sessions.usable(lease)

@@ -477,7 +477,7 @@ public class Skill {
 		return distanceTolerance;
 	}
 
-	private boolean isSuspiciousClientHitTime(int clientHitTime, int serverHitTime, int tolerance, Player player) {
+	protected boolean isSuspiciousClientHitTime(int clientHitTime, int serverHitTime, int tolerance, Player player) {
 		if (clientHitTime >= serverHitTime - tolerance)
 			return false;
 		if (clientHitTime == 0 && (itemTemplate != null || skillTemplate.getMotion() != null && skillTemplate.getMotion().isInstantSkill()))
@@ -690,7 +690,7 @@ public class Skill {
 				}
 			}
 
-			QuestEngine.getInstance().onUseSkill(new QuestEnv(effector.getTarget(), (Player) effector, 0), skillTemplate.getSkillId());
+			onPlayerUseSkill(playerEffector);
 		}
 
 		if (setCooldowns)
@@ -772,7 +772,14 @@ public class Skill {
 			});
 	}
 
-	private void applyEffect(List<Effect> effects) {
+	protected void onPlayerUseSkill(Player player) {
+		QuestEngine.getInstance().onUseSkill(new QuestEnv(effector.getTarget(), player, 0), skillTemplate.getSkillId());
+	}
+
+	/** Only cancellable server actions opt into releasing their own pending lethal-hit marker. */
+	protected Object getEffectReservationOwner() { return null; }
+
+	protected void applyEffect(List<Effect> effects) {
 		// Apply effects to effected objects
 		effects.forEach(Effect::applyEffect);
 		if (isHostile() && effector instanceof Player player)

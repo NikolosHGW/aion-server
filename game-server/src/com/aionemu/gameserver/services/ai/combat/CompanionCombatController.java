@@ -73,8 +73,10 @@ public final class CompanionCombatController {
 		if (!signalSource.isEnabled())
 			return;
 		OwnerAttackSignal signal = signalSource.poll();
-		if (signal == null)
+		if (signal == null) {
+			if (gateway instanceof CombatActivityGateway activity) activity.tick();
 			return;
+		}
 		lastEventAt = signal.occurredAt();
 		if (signal.sessionId() != sessionId || signal.ownerObjectId() != ownerObjectId || signal.companionObjectId() != companionObjectId) {
 			lastResult = CombatResult.of(CombatStatus.SESSION_MISMATCH, "signal-session-identity", signal);
@@ -121,6 +123,8 @@ public final class CompanionCombatController {
 		return currentTimeMillis.getAsLong() < followCatchUpSuppressedUntil;
 	}
 
+	public boolean holdsMovement() { return gateway instanceof CombatActivityGateway activity && activity.holdsMovement(); }
+
 	public synchronized String status() {
 		long eventAge = lastEventAt == 0 ? -1 : Math.max(0, currentTimeMillis.getAsLong() - lastEventAt);
 		return "assistEnabled=" + signalSource.isEnabled()
@@ -132,7 +136,8 @@ public final class CompanionCombatController {
 			+ ", lastCombatResult=" + lastResult.status()
 			+ ", lastCombatReason=" + lastResult.reason()
 			+ ", lastCombatTargetObjectId=" + lastResult.targetObjectId()
-			+ ", lastCombatTargetTemplateId=" + lastResult.targetTemplateId();
+			+ ", lastCombatTargetTemplateId=" + lastResult.targetTemplateId()
+			+ (gateway instanceof CombatActivityGateway activity ? activity.diagnostics() : "");
 	}
 
 	private void logResult(CombatResult result) {

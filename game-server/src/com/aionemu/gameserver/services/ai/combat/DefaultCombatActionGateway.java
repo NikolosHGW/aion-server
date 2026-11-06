@@ -157,7 +157,27 @@ public final class DefaultCombatActionGateway implements CombatActionGateway {
 		return violations;
 	}
 
+	/** Same narrow native target/quest authorization; range and cadence belong to the selected native skill. */
+	public boolean allowsSkillTarget(OwnerAttackSignal signal) {
+		return allowsSkillTarget(signal, false);
+	}
+
+	public boolean allowsSkillTarget(OwnerAttackSignal signal, boolean ownsPendingLethalHit) {
+		if (signal == null) return false;
+		TargetAuthorization authorization = authorizeTarget(signal, true, ownsPendingLethalHit);
+		EnumSet<CombatPreflightViolation> violations = inspect(signal, authorization);
+		if (ownsPendingLethalHit && !signal.target().isDead()) violations.remove(CombatPreflightViolation.TARGET_DEAD);
+		violations.remove(CombatPreflightViolation.OUT_OF_RANGE);
+		violations.remove(CombatPreflightViolation.COOLDOWN);
+		return violations.isEmpty() && (authorization != TargetAuthorization.QUEST
+			|| questAuthorizationPolicy.recheckLiveState(signal, (Npc) signal.target()).allowed());
+	}
+
 	private TargetAuthorization authorizeTarget(OwnerAttackSignal signal) {
+		return authorizeTarget(signal, false, false);
+	}
+
+	private TargetAuthorization authorizeTarget(OwnerAttackSignal signal, boolean nativeSkillRange, boolean ownsPendingLethalHit) {
 		if (!(signal.target() instanceof Npc target))
 			return TargetAuthorization.REJECTED;
 		Set<Integer> allowlist;
@@ -170,7 +190,8 @@ public final class DefaultCombatActionGateway implements CombatActionGateway {
 			&& allowlist.equals(Set.of(CombatNpcAllowlist.FIRST_SPIKE_NPC_ID)) && target.getWorldId() == FIRST_SPIKE_MAP_ID
 			&& isApprovedFirstSpikeSpawn(target))
 			return TargetAuthorization.LEGACY;
-		QuestCombatAuthorizationPolicy.Decision decision = questAuthorizationPolicy.authorize(signal, target);
+		QuestCombatAuthorizationPolicy.Decision decision = nativeSkillRange
+			? questAuthorizationPolicy.authorizeSkill(signal, target, ownsPendingLethalHit) : questAuthorizationPolicy.authorize(signal, target);
 		if (QuestCombatAuthorizationPolicy.isQuestTargetTemplate(target.getNpcId()) && !decision.allowed())
 			questAuthorizationPolicy.log(decision, signal, target);
 		return decision.allowed() ? TargetAuthorization.QUEST : TargetAuthorization.REJECTED;

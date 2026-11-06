@@ -116,6 +116,6 @@ public final class DefaultPlayerActionGateway implements PlayerActionGateway {
 	}
 
 	static boolean requiresOwnerLineOfSight(MovementIntent intent) {
-		return intent == MovementIntent.OWNER_OFFSET;
+		return intent == MovementIntent.OWNER_OFFSET || intent == MovementIntent.COMBAT_APPROACH;
 	}
 }

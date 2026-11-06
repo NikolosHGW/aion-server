@@ -353,7 +353,7 @@ public class Effect implements StatOwner {
 				value = 0;
 				// effected is about to die
 				if (!effected.isDead())
-					effected.getLifeStats().setKillingBlow(er.getValue());
+					effected.getLifeStats().setKillingBlow(er.getValue(), getSkill() == null ? null : getSkill().getEffectReservationOwner());
 				effectedHp = 0;
 			} else {
 				effectedHp = Math.max(1, (int) (100f * value / effected.getLifeStats().getMaxHp()));

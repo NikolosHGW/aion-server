@@ -9,6 +9,33 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
 class ActionSessionTest {
+	@Test void lateSkillCompletionCannotCompleteANewAction() {
+		var first = actions.nextId();
+		actions.start(first, "cast1", 200, this::run, stops::incrementAndGet);
+		var second = actions.nextId();
+		actions.start(second, "cast2", 200, this::run, stops::incrementAndGet);
+		assertNull(actions.finish(first, ActionSession.State.SUCCEEDED, "late-hit"));
+		assertEquals(ActionSession.State.RUNNING, actions.current().state());
+		actions.finish(second, ActionSession.State.SUCCEEDED, "native-effect-resolved");
+		actions.cancel(second, "late-cancel");
+		assertEquals(ActionSession.State.SUCCEEDED, actions.current().state());
+		assertEquals(1, stops.get());
+	}
+	@Test void cancelledSkillCannotBeResurrectedByItsDelayedEffect() {
+		var id = actions.nextId();
+		actions.start(id, "cast", 200, this::run, stops::incrementAndGet);
+		actions.cancel(id, "owner-dismissed");
+		actions.finish(id, ActionSession.State.SUCCEEDED, "late-hit");
+		assertEquals(ActionSession.State.CANCELLED, actions.current().state());
+	}
+	@Test void synchronousInstantSkillCompletionSurvivesStartReturn() {
+		var id = actions.nextId();
+		actions.start(id, "cast", 200, () -> {
+			actions.finish(id, ActionSession.State.SUCCEEDED, "native-effect-resolved");
+			return run();
+		}, stops::incrementAndGet);
+		assertEquals(ActionSession.State.SUCCEEDED, actions.current().state());
+	}
 	private final AtomicLong clock = new AtomicLong(100);
 	private final AtomicBoolean usable = new AtomicBoolean(true);
 	private final AtomicInteger executions = new AtomicInteger(), stops = new AtomicInteger();

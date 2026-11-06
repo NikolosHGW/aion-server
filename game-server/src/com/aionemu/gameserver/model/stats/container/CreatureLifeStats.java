@@ -21,7 +21,8 @@ public abstract class CreatureLifeStats<T extends Creature> {
 	private int cachedMaxHp;
 	private int currentMp;
 	private int cachedMaxMp;
-	private int killingBlow; // for long animation skills that will kill - last damage
+	private volatile int killingBlow; // for long animation skills that will kill - last damage
+	private Object killingBlowOwner;
 	protected final T owner;
 	protected final Object restoreLock = new Object();
 	protected Future<?> lifeRestoreTask;
@@ -61,11 +62,28 @@ public abstract class CreatureLifeStats<T extends Creature> {
 	}
 
 	public void setKillingBlow(int killingBlow) {
-		this.killingBlow = killingBlow;
+		setKillingBlow(killingBlow, null);
 	}
 
-	private void unsetIsAboutToDie() {
+	/** Optional identity for a cancellable delayed effect; ordinary native skills keep null. */
+	public synchronized void setKillingBlow(int killingBlow, Object reservationOwner) {
+		// A cancellable action must not replace someone else's already pending lethal hit.
+		if (reservationOwner != null && this.killingBlow != 0 && killingBlowOwner != reservationOwner) return;
+		this.killingBlow = killingBlow;
+		this.killingBlowOwner = killingBlow == 0 ? null : reservationOwner;
+	}
+
+	public synchronized boolean hasKillingBlowReservation(Object reservationOwner) {
+		return reservationOwner != null && killingBlow != 0 && killingBlowOwner == reservationOwner;
+	}
+
+	public synchronized void releaseKillingBlowReservation(Object reservationOwner) {
+		if (hasKillingBlowReservation(reservationOwner)) unsetIsAboutToDie();
+	}
+
+	private synchronized void unsetIsAboutToDie() {
 		this.killingBlow = 0;
+		this.killingBlowOwner = null;
 	}
 
 	/**
