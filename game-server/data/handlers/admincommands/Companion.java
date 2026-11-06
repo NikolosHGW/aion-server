@@ -23,6 +23,9 @@ public class Companion extends AdminCommand {
 			<items list|cancel|receipt UUID> - Inspect inventory or pending handover.
 			<items use|unequip|give|take ObjectId> - Use potion, unequip, or queue whole item for logout.
 			<items equip ObjectId SlotMask> - Equip through native class/level rules.
+			<activities> - List companion activities and available audited quests.
+			<activity escort|support|rest|quest ID> - Choose an activity.
+			<next> - Explain the next step from your native quest journal.
 			<today> - Offer one read-only quest goal from the configured allowlist.
 			<goal choose|status|clear> - Manage the persistent quest goal intent.
 			""");
@@ -38,6 +41,15 @@ public class Companion extends AdminCommand {
 	}
 
 	private void executeOwned(Player admin, String... params) {
+		if (params.length >= 2 && params[0].equalsIgnoreCase("activity")) {
+			String kind = params[1].toLowerCase(java.util.Locale.ROOT);
+			if (kind.equals("quest") && params.length == 3)
+				sendInfo(admin, CompanionService.getInstance().activity(admin, kind, Integer.parseInt(params[2])));
+			else if (params.length == 2 && java.util.Set.of("escort", "support", "rest").contains(kind))
+				sendInfo(admin, CompanionService.getInstance().activity(admin, kind, 0));
+			else sendInfo(admin);
+			return;
+		}
 		if (params.length == 2 && params[0].equalsIgnoreCase("move") && java.util.Set.of("here", "target").contains(params[1].toLowerCase())) {
 			sendInfo(admin, CompanionService.getInstance().navigate(admin, params[1].equalsIgnoreCase("target"))); return;
 		}
@@ -77,6 +89,8 @@ public class Companion extends AdminCommand {
 
 		CompanionService service = CompanionService.getInstance();
 		switch (params[0].toLowerCase()) {
+			case "activities" -> service.activities(admin).forEach(line -> sendInfo(admin, line));
+			case "next" -> sendInfo(admin, service.nextActivity(admin));
 			case "sources" -> {
 				for (var source : service.sources(admin))
 					sendInfo(admin, source.name() + " | " + source.race() + " | " + source.gender() + " | " + source.playerClass());

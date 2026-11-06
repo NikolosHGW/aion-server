@@ -63,7 +63,7 @@ public final class QuestCombatAuthorizationPolicy {
 			return Decision.reject("QUEST_COMBAT_FEATURE_DISABLED");
 		if (!assistEnabled.getAsBoolean())
 			return Decision.reject("ASSIST_DISABLED");
-		if (!QuestExecutionAllowlist.isExactFirstExecutionQuest(allowedQuestIds.get()))
+		if (!QuestExecutionAllowlist.isValid(allowedQuestIds.get()))
 			return Decision.reject("INVALID_QUEST_ALLOWLIST");
 		AuthorizationView view = executionRuntime.authorizationView().orElse(null);
 		if (view == null)
@@ -74,7 +74,7 @@ public final class QuestCombatAuthorizationPolicy {
 			|| signal.ownerObjectId() != owner.getObjectId() || signal.companionObjectId() != companion.getObjectId()
 			|| signal.sessionId() != companionSessionId)
 			return Decision.reject("SESSION_IDENTITY_MISMATCH");
-		if (view.session().questId() != QuestExecutionAllowlist.FIRST_EXECUTION_QUEST_ID
+		if (!QuestExecutionAllowlist.allows(allowedQuestIds.get(), view.session().questId())
 			|| view.snapshot().executionState() != QuestExecutionState.ACTIVE_OBJECTIVE)
 			return Decision.reject("EXECUTION_NOT_ACTIVE_OBJECTIVE");
 		Decision live = checkLiveQuest(view, target);
@@ -109,7 +109,7 @@ public final class QuestCombatAuthorizationPolicy {
 	/** Must be called immediately before the checked player hit. */
 	public Decision recheckLiveState(OwnerAttackSignal signal, Npc target) {
 		if (!featureEnabled.getAsBoolean() || !assistEnabled.getAsBoolean()
-			|| !QuestExecutionAllowlist.isExactFirstExecutionQuest(allowedQuestIds.get()))
+			|| !QuestExecutionAllowlist.isValid(allowedQuestIds.get()))
 			return Decision.reject("RUNTIME_DISABLED_BEFORE_HIT");
 		AuthorizationView view = executionRuntime.authorizationView().orElse(null);
 		if (view == null || signal.sessionId() != companionSessionId || signal.owner() != owner || signal.companion() != companion)
@@ -119,6 +119,8 @@ public final class QuestCombatAuthorizationPolicy {
 
 	private Decision checkLiveQuest(AuthorizationView view, Npc target) {
 		QuestExecutionManifest manifest = view.session().plan().manifest();
+		if (!QuestExecutionAllowlist.allows(allowedQuestIds.get(), view.session().questId()))
+			return Decision.reject("QUEST_REMOVED_FROM_ALLOWLIST");
 		QuestState nativeState = owner.getQuestStateList().getQuestState(view.session().questId());
 		if (nativeState == null)
 			return Decision.reject("NATIVE_QUEST_ABSENT");
@@ -134,15 +136,15 @@ public final class QuestCombatAuthorizationPolicy {
 
 	public void log(Decision decision, OwnerAttackSignal signal, Npc target) {
 		log.info(
-			"AI_COMPANION_QUEST_EXECUTION action=COMBAT_AUTHORIZATION result={} reason={} ownerObjectId={} companionObjectId={} companionSessionId={} questId={} previousState=none newState=none nativeQuestStatus={} progress={} required=3 targetObjectId={} targetTemplateId={} eventId={} persistence=false",
+			"AI_COMPANION_QUEST_EXECUTION action=COMBAT_AUTHORIZATION result={} reason={} ownerObjectId={} companionObjectId={} companionSessionId={} questId={} previousState=none newState=none nativeQuestStatus={} progress={} required={} targetObjectId={} targetTemplateId={} eventId={} persistence=false",
 			decision.allowed() ? "ALLOWED" : "REJECTED", decision.reason(), owner.getObjectId(), companion.getObjectId(), companionSessionId,
-			QuestExecutionAllowlist.FIRST_EXECUTION_QUEST_ID,
-			decision.nativeQuestStatus() == null ? "UNKNOWN" : decision.nativeQuestStatus(), decision.progress(), target.getObjectId(), target.getNpcId(),
+			executionRuntime.authorizationView().map(v -> v.session().questId()).orElse(0),
+			decision.nativeQuestStatus() == null ? "UNKNOWN" : decision.nativeQuestStatus(), decision.progress(), executionRuntime.authorizationView().map(v -> v.session().plan().manifest().requiredProgress()).orElse(0), target.getObjectId(), target.getNpcId(),
 			signal.eventId());
 	}
 
 	public static boolean isQuestTargetTemplate(int npcId) {
-		return npcId == QuestExecutionManifest.TARGET_1_ID || npcId == QuestExecutionManifest.TARGET_2_ID;
+		return npcId == QuestExecutionManifest.TARGET_1_ID || npcId == QuestExecutionManifest.TARGET_2_ID || npcId == 210142 || npcId == 210143;
 	}
 
 	public record Decision(boolean allowed, String reason, QuestStatus nativeQuestStatus, int progress) {

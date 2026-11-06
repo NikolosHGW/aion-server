@@ -16,10 +16,14 @@ public record QuestExecutionManifest(int questId, int mapId, List<Integer> targe
 	public QuestExecutionManifest {
 		targetIds = List.copyOf(targetIds);
 		approvedTargetSpawns = List.copyOf(approvedTargetSpawns);
-		if (questId != QuestExecutionAllowlist.FIRST_EXECUTION_QUEST_ID || mapId != POETA_MAP_ID
-			|| !targetIds.equals(List.of(TARGET_1_ID, TARGET_2_ID)) || requiredProgress != REQUIRED_PROGRESS
-			|| startNpcId != START_END_NPC_ID || endNpcId != START_END_NPC_ID || approvedTargetSpawns.size() != 39)
-			throw new IllegalArgumentException("Invalid curated quest 1102 execution manifest");
+		boolean first = questId == QuestExecutionAllowlist.FIRST_EXECUTION_QUEST_ID
+			&& targetIds.equals(List.of(TARGET_1_ID, TARGET_2_ID)) && requiredProgress == REQUIRED_PROGRESS
+			&& startNpcId == START_END_NPC_ID && endNpcId == START_END_NPC_ID && approvedTargetSpawns.size() == 39;
+		boolean second = questId == QuestExecutionAllowlist.SECOND_EXECUTION_QUEST_ID
+			&& targetIds.equals(List.of(210142, 210143)) && requiredProgress == 9
+			&& startNpcId == 203082 && endNpcId == 203082 && approvedTargetSpawns.size() == 11;
+		if (mapId != POETA_MAP_ID || !first && !second)
+			throw new IllegalArgumentException("Invalid curated quest execution manifest");
 	}
 
 	public boolean matchesTarget(int targetTemplateId, SpawnTemplate spawn) {
@@ -75,6 +79,29 @@ public record QuestExecutionManifest(int questId, int mapId, List<Integer> targe
 				spawn(TARGET_2_ID, 1109.56f, 1173.8f, 126.625f, 97),
 				spawn(TARGET_2_ID, 1111.61f, 1178.84f, 126.496f, 72),
 				spawn(TARGET_2_ID, 1126.45f, 1182.56f, 129.329f, 14)));
+	}
+
+	public static QuestExecutionManifest curated(int questId) {
+		return switch (questId) {
+			case 1102 -> curated1102();
+			case 1120 -> curated1120();
+			default -> throw new IllegalArgumentException("Quest has no audited execution manifest");
+		};
+	}
+	public static QuestExecutionManifest curated1120() {
+		QuestSpawnFingerprint npc = spawn(203082, 429.762f, 1756.56f, 119.772f, 86);
+		return new QuestExecutionManifest(1120, POETA_MAP_ID, List.of(210142, 210143), 9, 203082, 203082, npc, npc,
+			List.of(spawn(210142, 467.97f, 1669.97f, 125.252f, 79),
+				spawn(210142, 481.991f, 1663.75f, 125.86f, 43),
+				spawn(210142, 482.421f, 1637.01f, 122.3f, 85),
+				spawn(210142, 489.306f, 1631.29f, 119.947f, 37),
+				spawn(210142, 510.149f, 1608.45f, 117.241f, 36),
+				spawn(210142, 529.013f, 1611.19f, 116.849f, 38),
+				spawn(210143, 561.45f, 1869.82f, 138.818f, 23),
+				spawn(210143, 564.268f, 1845.35f, 139.003f, 50),
+				spawn(210143, 595.445f, 1842.69f, 139.051f, 105),
+				spawn(210143, 676.238f, 1881.06f, 142.534f, 81),
+				spawn(210143, 677.336f, 1875.69f, 142.929f, 13)));
 	}
 
 	private static QuestSpawnFingerprint spawn(int npcId, float x, float y, float z, int heading) {

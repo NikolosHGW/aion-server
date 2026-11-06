@@ -94,7 +94,7 @@ class CompanionStage2DSourceBoundaryTest {
 	void questAuthorizationIsExactAndLegacyNpcRemainsIndependent() throws IOException {
 		String policy = read("services/ai/combat/QuestCombatAuthorizationPolicy.java");
 		String gateway = read("services/ai/combat/DefaultCombatActionGateway.java");
-		for (String required : List.of("PERSONAL_COMPANION", "FIRST_EXECUTION_QUEST_ID", "ACTIVE_OBJECTIVE", "matchesTarget",
+		for (String required : List.of("PERSONAL_COMPANION", "QuestExecutionAllowlist.allows", "ACTIVE_OBJECTIVE", "matchesTarget",
 			"manifest.mapId()", "NpcObjectType.NORMAL", "NpcRating.NORMAL", "getKnownList().knows", "getKnownList().sees",
 			"PositionUtil.isInAttackRange", "GeoService.getInstance().canSee"))
 			assertTrue(policy.contains(required), required);
@@ -110,7 +110,7 @@ class CompanionStage2DSourceBoundaryTest {
 		assertTrue(manifest.contains("TARGET_1_ID = 210133"));
 		assertTrue(manifest.contains("TARGET_2_ID = 210134"));
 		assertTrue(manifest.contains("REQUIRED_PROGRESS = 3"));
-		assertTrue(manifest.contains("approvedTargetSpawns.size() != 39"));
+		assertTrue(manifest.contains("approvedTargetSpawns.size() == 39"));
 		assertTrue(fingerprint.contains("spawn.getWalkerId() == null"));
 		assertTrue(fingerprint.contains("!spawn.isTemporarySpawn()"));
 		assertTrue(fingerprint.contains("!spawn.isEventSpawn()"));

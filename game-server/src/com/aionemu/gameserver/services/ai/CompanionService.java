@@ -474,6 +474,79 @@ public final class CompanionService {
 		return withOwner(requester, current -> current.combatController().status());
 	}
 
+	public List<String> activities(Player requester) {
+		return withOwner(requester, current -> {
+			requireActivitiesEnabled();
+			List<String> lines = new ArrayList<>();
+			lines.add("Занятия: //companion activity escort — следовать; support — помогать в бою; rest — ждать без боя.");
+			lines.add("Подсказка: //companion next. Задание выбирается через //companion activity quest ID.");
+			if (!isQuestExecutionFeatureEnabled()) { lines.add("Помощь с заданиями сейчас отключена настройками сервера."); return lines; }
+			for (int id : QuestExecutionAllowlist.parse(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS).stream().sorted().toList()) {
+				var candidate = goalCandidateProvider.provide(requester, id);
+				if (!candidate.success()) { lines.add("Задание " + id + ": недоступно в текущем мире."); continue; }
+				try { executionPlanProvider.build(candidate.plan()); }
+				catch (IllegalArgumentException | IllegalStateException changed) { lines.add("Задание " + id + ": данные требуют повторной проверки."); continue; }
+				var state = QuestNativeSnapshot.readOnly(requester.getQuestStateList().getQuestState(id));
+				var eligibility = goalEligibility.check(requester, id);
+				boolean ongoing = state.present() && (state.status() == com.aionemu.gameserver.questEngine.model.QuestStatus.START
+					|| state.status() == com.aionemu.gameserver.questEngine.model.QuestStatus.REWARD);
+				String availability = ongoing ? "в журнале" : eligibility.eligible() ? "можно выбрать"
+					: state.status() == com.aionemu.gameserver.questEngine.model.QuestStatus.COMPLETE ? "завершено" : "условия начала не выполнены";
+				lines.add(id + " — " + candidate.plan().localizedQuestName() + " — " + availability);
+			}
+			return List.copyOf(lines);
+		});
+	}
+
+	public String activity(Player requester, String kind, int questId) {
+		return withOwner(requester, current -> {
+			requireActivitiesEnabled();
+			switch (kind) {
+				case "escort" -> { current.combatController().disableAssist("activity-escort"); current.controller().follow(); }
+				case "support" -> { requireCombatFeatureEnabled(); current.controller().follow(); assistOn(current, requester); }
+				case "rest" -> { current.combatController().disableAssist("activity-rest"); current.controller().stay(); }
+				case "quest" -> {
+					requireGoalFeatureEnabled(); requireExecutionConfiguration();
+					if (!isQuestExecutionFeatureEnabled() || !QuestExecutionAllowlist.allows(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS, questId))
+						throw new IllegalArgumentException("Это задание не включено в проверенный список.");
+					var candidate = goalCandidateProvider.provide(requester, questId);
+					if (!candidate.success()) throw new IllegalStateException("Задание недоступно в текущем мире: " + candidate.reason());
+					executionPlanProvider.build(candidate.plan());
+					var state = QuestNativeSnapshot.readOnly(requester.getQuestStateList().getQuestState(questId));
+					boolean ongoing = state.present() && (state.status() == com.aionemu.gameserver.questEngine.model.QuestStatus.START
+						|| state.status() == com.aionemu.gameserver.questEngine.model.QuestStatus.REWARD);
+					if (!ongoing && !goalEligibility.check(requester, questId).eligible()) throw new IllegalStateException("Условия начала задания не выполнены или оно уже завершено.");
+					if (!persistChosenGoal(current, candidate.plan())) throw new IllegalStateException("Не удалось сохранить выбор; прежнее занятие сохранено.");
+					current.goalSession().restoreChosen(candidate.plan());
+					attachExecution(current, candidate.plan());
+				}
+				default -> throw new IllegalArgumentException("Выберите escort, support, rest или quest ID.");
+			}
+			return nextActivity(current, requester);
+		});
+	}
+
+	public String nextActivity(Player requester) {
+		return withOwner(requester, current -> { requireActivitiesEnabled(); return nextActivity(current, requester); });
+	}
+
+	private String nextActivity(CompanionSession current, Player requester) {
+		String mode = current.controller().getMode() == CompanionMode.STAYING ? "Жду на месте." : "Следую за вами или к выбранной точке.";
+		mode += current.combatController().isAssistEnabled() ? " Помощь в бою включена." : " Помощь в бою выключена.";
+		var plan = current.goalSession().chosen();
+		if (plan == null) return mode + " Выберите задание: //companion activities.";
+		if (!isQuestExecutionFeatureEnabled() || !QuestExecutionAllowlist.allows(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS, plan.questId())
+			|| requester.getWorldId() != com.aionemu.gameserver.services.ai.quest.QuestExecutionManifest.POETA_MAP_ID)
+			return mode + " Помощь с выбранным заданием приостановлена в текущем мире или настройках.";
+		return mode + " " + com.aionemu.gameserver.services.ai.quest.CompanionActivityGuide.next(plan,
+			QuestNativeSnapshot.readOnly(requester.getQuestStateList().getQuestState(plan.questId())));
+	}
+
+	private void requireActivitiesEnabled() {
+		CompanionPreflight.requireEnabled(AIConfig.ENABLED, AIConfig.COMPANIONS_ENABLED);
+		if (!AIConfig.COMPANION_ACTIVITIES_ENABLED) throw new IllegalStateException("Каталог занятий пока отключён на сервере.");
+	}
+
 	public QuestGoalProposalResult proposeGoal(Player requester) {
 		return withOwner(requester, current -> proposeGoal(current, requester));
 	}
@@ -482,40 +555,27 @@ public final class CompanionService {
 		requireGoalFeatureEnabled();
 		if (AIConfig.COMPANION_QUEST_EXECUTION_ENABLED) {
 			requireExecutionConfiguration();
-			var nativeState = requester.getQuestStateList().getQuestState(QuestExecutionAllowlist.FIRST_EXECUTION_QUEST_ID);
-			if (nativeState != null && nativeState.getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.COMPLETE) {
-				if (current.goalSession().chosen() == null) {
-					current.executionRuntime().clear("already-complete");
-					current.goalSession().clear();
+			var ids = QuestExecutionAllowlist.parse(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS).stream().sorted().toList();
+			for (int id : ids) {
+				var nativeState = requester.getQuestStateList().getQuestState(id);
+				if (nativeState != null && (nativeState.getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.START
+					|| nativeState.getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.REWARD)) {
+					var existing = goalCandidateProvider.provide(requester, id);
+					if (!existing.success()) throw new IllegalStateException(existing.reason().name());
+					executionPlanProvider.build(existing.plan());
+					current.executionRuntime().clear("new-reattach-offer");
+					current.goalSession().offer(existing.plan());
+					return QuestGoalProposalResult.offered(existing.plan());
 				}
-				log.info(
-					"AI_COMPANION_QUEST_EXECUTION action=PROPOSE result=ALREADY_COMPLETE reason=NATIVE_QUEST_COMPLETE ownerObjectId={} companionObjectId={} companionSessionId={} questId=1102 previousState=NO_GOAL newState=COMPLETED nativeQuestStatus=COMPLETE progress=0 required=3 persistence=false",
-					requester.getObjectId(), current.controlledPlayer().getObjectId(), current.combatSessionId());
-				return QuestGoalProposalResult.alreadyComplete(QuestExecutionAllowlist.FIRST_EXECUTION_QUEST_ID);
 			}
-			if (nativeState != null && (nativeState.getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.START
-				|| nativeState.getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.REWARD)) {
-				QuestGoalCandidateProvider.CandidateResult existing = goalCandidateProvider.provide(requester,
-					QuestExecutionAllowlist.FIRST_EXECUTION_QUEST_ID);
-				if (!existing.success())
-					throw new IllegalStateException(existing.reason().name());
-				executionPlanProvider.build(existing.plan());
-				if (current.executionRuntime().clear("new-reattach-offer"))
-					logExecutionDetach(current, "new-reattach-offer");
-				current.goalSession().offer(existing.plan());
-				log.info("AI_COMPANION_GOAL action=OFFERED_REATTACH ownerObjectId={} companionObjectId={} questId={} persistence=false",
-					requester.getObjectId(), current.controlledPlayer().getObjectId(), existing.plan().questId());
-				return QuestGoalProposalResult.offered(existing.plan());
-			}
+			if (ids.stream().allMatch(id -> requester.getQuestStateList().getQuestState(id) != null
+				&& requester.getQuestStateList().getQuestState(id).getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.COMPLETE))
+				return QuestGoalProposalResult.alreadyComplete(ids.getLast());
 		}
 		QuestGoalPlanner.ProposalResult proposal = buildGoalProposal(requester);
-		if (!proposal.success())
-			throw new IllegalStateException(proposal.reason() + "; rejections=" + proposal.rejections());
-		if (current.executionRuntime().clear("new-offer"))
-			logExecutionDetach(current, "new-offer");
+		if (!proposal.success()) throw new IllegalStateException(proposal.reason() + "; rejections=" + proposal.rejections());
+		current.executionRuntime().clear("new-offer");
 		current.goalSession().offer(proposal.plan());
-		log.info("AI_COMPANION_GOAL action=OFFERED ownerObjectId={} companionObjectId={} questId={} persistence=false",
-			requester.getObjectId(), current.controlledPlayer().getObjectId(), proposal.plan().questId());
 		return QuestGoalProposalResult.offered(proposal.plan());
 	}
 
@@ -571,7 +631,7 @@ public final class CompanionService {
 				return logChoice(requester, current,
 					current.goalSession().revalidationFailed(requester.getObjectId(), controlled.getObjectId(), QuestGoalReason.INVALID_ALLOWLIST));
 			}
-			if (offered.questId() != QuestExecutionAllowlist.FIRST_EXECUTION_QUEST_ID)
+			if (!QuestExecutionAllowlist.allows(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS, offered.questId()))
 				return logChoice(requester, current,
 					current.goalSession().revalidationFailed(requester.getObjectId(), controlled.getObjectId(), QuestGoalReason.INVALID_ALLOWLIST));
 			if (nativeState != null && nativeState.getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.COMPLETE) {
@@ -592,6 +652,7 @@ public final class CompanionService {
 		if (!offered.semanticFingerprint().equals(candidate.plan().semanticFingerprint()))
 			return logChoice(requester, current,
 				current.goalSession().revalidationFailed(requester.getObjectId(), controlled.getObjectId(), QuestGoalReason.SEMANTIC_FINGERPRINT_CHANGED));
+		if (attachExecution) executionPlanProvider.build(candidate.plan());
 		if (!persistChosenGoal(current, candidate.plan()))
 			return logChoice(requester, current, ChoiceResult.persistenceFailed(candidate.plan().questId()));
 		ChoiceResult result = current.goalSession().choose(requester.getObjectId(), controlled.getObjectId(), candidate.plan());
@@ -778,7 +839,9 @@ public final class CompanionService {
 			if (goalChanged || executionChanged)
 				log.info("AI_COMPANION_GOAL action=CLEARED ownerObjectId={} companionObjectId={} changed=true reason=feature-disabled persistence=false",
 					current.owner().getObjectId(), current.controlledPlayer().getObjectId());
-		} else if (!isQuestExecutionFeatureEnabled() && current.executionRuntime().clear("quest-execution-disabled")) {
+		} else if ((!isQuestExecutionFeatureEnabled() || current.goalSession().chosen() != null
+			&& !QuestExecutionAllowlist.allows(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS, current.goalSession().chosen().questId()))
+			&& current.executionRuntime().clear("quest-execution-disabled")) {
 			logExecutionDetach(current, "quest-execution-disabled");
 		}
 	}
@@ -791,7 +854,7 @@ public final class CompanionService {
 	private boolean isQuestExecutionFeatureEnabled() {
 		return AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED && AIConfig.COMPANION_QUEST_GOALS_ENABLED
 			&& AIConfig.COMPANION_QUEST_EXECUTION_ENABLED
-			&& QuestExecutionAllowlist.isExactFirstExecutionQuest(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS)
+			&& QuestExecutionAllowlist.isValid(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS)
 			&& isExactExecutionGoalAllowlist() && isValidExecutionPollInterval();
 	}
 
@@ -800,18 +863,18 @@ public final class CompanionService {
 	}
 
 	private void requireExecutionConfiguration() {
-		if (!QuestExecutionAllowlist.isExactFirstExecutionQuest(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS))
-			throw new IllegalStateException("Quest execution allowlist must contain exact quest 1102");
+		if (!QuestExecutionAllowlist.isValid(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS))
+			throw new IllegalStateException("Quest execution requires an audited nonempty subset of 1102,1120");
 		if (!isExactExecutionGoalAllowlist())
-			throw new IllegalStateException("Quest goal allowlist must contain exact quest 1102 while execution is enabled");
+			throw new IllegalStateException("Quest goal and execution allowlists must match while execution is enabled");
 		com.aionemu.gameserver.services.ai.quest.CompanionQuestExecutionTracker.requireValidPollInterval(
 			AIConfig.COMPANION_QUEST_EXECUTION_POLL_INTERVAL_MS);
 	}
 
 	private boolean isExactExecutionGoalAllowlist() {
 		try {
-			return QuestGoalCandidateProvider.parseAllowedQuestIds(AIConfig.COMPANION_QUEST_GOAL_ALLOWED_IDS)
-				.equals(List.of(QuestExecutionAllowlist.FIRST_EXECUTION_QUEST_ID));
+			return new java.util.HashSet<>(QuestGoalCandidateProvider.parseAllowedQuestIds(AIConfig.COMPANION_QUEST_GOAL_ALLOWED_IDS))
+				.equals(QuestExecutionAllowlist.parse(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS));
 		} catch (IllegalArgumentException e) {
 			return false;
 		}
@@ -956,6 +1019,8 @@ public final class CompanionService {
 
 	private void attachExecution(CompanionSession current, QuestGoalPlan chosen) {
 		requireExecutionConfiguration();
+		if (!QuestExecutionAllowlist.allows(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS, chosen.questId()))
+			throw new IllegalStateException("Chosen quest is no longer allowed");
 		QuestExecutionPlan executionPlan = executionPlanProvider.build(chosen);
 		Player owner = current.owner();
 		Player companion = current.controlledPlayer().getPlayer();
@@ -964,7 +1029,7 @@ public final class CompanionService {
 			() -> new QuestExecutionRuntimeContext(owner.getObjectId(), companion.getObjectId(), current.combatSessionId(),
 				QuestExecutionRole.PERSONAL_COMPANION, owner.getWorldId(), owner.getInstanceId(), companion.getWorldId(), companion.getInstanceId(),
 				owner.getClientConnection() != null, owner.isSpawned(), companion.isSpawned()),
-			transition -> notifyExecutionTransition(current, transition), System::currentTimeMillis,
+			transition -> notifyExecutionTransition(current, executionPlan.manifest(), transition), System::currentTimeMillis,
 			AIConfig.COMPANION_QUEST_EXECUTION_POLL_INTERVAL_MS);
 		log.info(
 			"AI_COMPANION_QUEST_EXECUTION action=ATTACH result=TRACKING reason=GOAL_CHOSEN ownerObjectId={} companionObjectId={} companionSessionId={} questId={} previousState=NO_GOAL newState=TRACKING nativeQuestStatus=read-only progress=read-only required={} persistence=false",
@@ -972,19 +1037,19 @@ public final class CompanionService {
 			executionPlan.manifest().requiredProgress());
 	}
 
-	private void notifyExecutionTransition(CompanionSession current, QuestExecutionTransition transition) {
+	private void notifyExecutionTransition(CompanionSession current, com.aionemu.gameserver.services.ai.quest.QuestExecutionManifest manifest, QuestExecutionTransition transition) {
 		var snapshot = transition.snapshot();
 		log.info(
-			"AI_COMPANION_QUEST_EXECUTION action=TRACK result=STATE_CHANGED reason={} ownerObjectId={} companionObjectId={} companionSessionId={} questId=1102 previousState={} newState={} nativeQuestStatus={} progress={} required={} persistence=false",
+			"AI_COMPANION_QUEST_EXECUTION action=TRACK result=STATE_CHANGED reason={} ownerObjectId={} companionObjectId={} companionSessionId={} questId={} previousState={} newState={} nativeQuestStatus={} progress={} required={} persistence=false",
 			snapshot.reason(), current.owner().getObjectId(), current.controlledPlayer().getObjectId(), current.combatSessionId(),
-			transition.previousState(), transition.newState(), snapshot.nativeQuestStatus() == null ? "ABSENT" : snapshot.nativeQuestStatus(),
+			manifest.questId(), transition.previousState(), transition.newState(), snapshot.nativeQuestStatus() == null ? "ABSENT" : snapshot.nativeQuestStatus(),
 			snapshot.currentProgress(), snapshot.requiredProgress());
-		PacketSendUtility.sendMessage(current.owner(), QuestExecutionCommandFormatter.formatTransition(transition));
+		PacketSendUtility.sendMessage(current.owner(), QuestExecutionCommandFormatter.formatTransition(manifest, transition));
 	}
 
 	private void logExecutionDetach(CompanionSession current, String reason) {
 		log.info(
-			"AI_COMPANION_QUEST_EXECUTION action=DETACH result=CLEARED reason={} ownerObjectId={} companionObjectId={} companionSessionId={} questId=1102 previousState=runtime newState=NO_GOAL nativeQuestStatus=unchanged progress=unchanged required=3 persistence=false",
+			"AI_COMPANION_QUEST_EXECUTION action=DETACH result=CLEARED reason={} ownerObjectId={} companionObjectId={} companionSessionId={} questId=current-goal previousState=runtime newState=NO_GOAL nativeQuestStatus=unchanged progress=unchanged required=manifest persistence=false",
 			reason, current.owner().getObjectId(), current.controlledPlayer().getObjectId(), current.combatSessionId());
 	}
 

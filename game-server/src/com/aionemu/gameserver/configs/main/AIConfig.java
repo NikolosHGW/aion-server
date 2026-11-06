@@ -9,6 +9,9 @@ import com.aionemu.commons.configuration.Property;
  */
 public class AIConfig {
 
+	@Property(key = "ai.companions.activities.enabled", defaultValue = "false")
+	public static boolean COMPANION_ACTIVITIES_ENABLED;
+
 	@Property(key = "ai.enabled", defaultValue = "false")
 	public static boolean ENABLED;
 
