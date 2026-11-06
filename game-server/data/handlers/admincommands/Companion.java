@@ -19,6 +19,9 @@ public class Companion extends AdminCommand {
 			<assist on|off|status> - Arm or disarm one-hit reactions to owner attack events.
 			<dismiss> - Dismiss your companion; keep its ownership and saved goal.
 			<status> - Show owner, lifecycle, movement and world diagnostics.
+			<items list|cancel|receipt UUID> - Inspect inventory or pending handover.
+			<items use|unequip|give|take ObjectId> - Use potion, unequip, or queue whole item for logout.
+			<items equip ObjectId SlotMask> - Equip through native class/level rules.
 			<today> - Offer one read-only quest goal from the configured allowlist.
 			<goal choose|status|clear> - Manage the persistent quest goal intent.
 			""");
@@ -34,6 +37,19 @@ public class Companion extends AdminCommand {
 	}
 
 	private void executeOwned(Player admin, String... params) {
+		if (params.length >= 2 && params[0].equalsIgnoreCase("items")) {
+			var service = CompanionService.getInstance();
+			String action = params[1].toLowerCase();
+			if (params.length == 2 && action.equals("list")) service.items(admin).forEach(line -> sendInfo(admin, line));
+			else if (params.length == 2 && action.equals("cancel")) sendInfo(admin, "Cancelled pending handover: " + service.cancelItemTransfer(admin));
+			else if (params.length == 3 && action.equals("receipt")) sendInfo(admin,
+				com.aionemu.gameserver.dao.CompanionItemTransferDAO.receipt(admin.getObjectId(), java.util.UUID.fromString(params[2])));
+			else if (params.length == 3 && java.util.Set.of("use", "unequip", "give", "take").contains(action)
+				|| params.length == 4 && action.equals("equip"))
+				sendInfo(admin, service.itemAction(admin, action, Integer.parseInt(params[2]), params.length == 4 ? Long.parseLong(params[3]) : 0));
+			else sendInfo(admin);
+			return;
+		}
 		if (params.length >= 2 && params.length <= 4 && params[0].equalsIgnoreCase("create")) {
 			var service = CompanionService.getInstance();
 			var result = service.create(admin, params[1], params.length >= 3 && !params[2].equals("-") ? params[2] : null,

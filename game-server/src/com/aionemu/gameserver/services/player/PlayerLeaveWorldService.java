@@ -167,6 +167,7 @@ public class PlayerLeaveWorldService {
 		PlayerDAO.storeOldCharacterLevel(player.getObjectId(), player.getLevel());
 		PlayerDAO.storeLastOnlineTime(player.getObjectId(), lastOnline);
 		PlayerDAO.onlinePlayer(player, false);
+		CompanionService.getInstance().finishItemTransferAfterLogout(player);
 
 		con.setActivePlayer(null);
 	}

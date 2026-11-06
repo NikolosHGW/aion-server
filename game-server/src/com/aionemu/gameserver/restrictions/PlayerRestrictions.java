@@ -274,9 +274,12 @@ public class PlayerRestrictions {
 	}
 
 	public static boolean canUseItem(Player player, Item item) {
-		if (player == null || !player.isOnline())
-			return false;
+		return player != null && player.isOnline() && canUseItemState(player, item);
+	}
 
+	/** Shared native state checks only. Callers must separately authorize the actor/session. */
+	public static boolean canUseItemState(Player player, Item item) {
+		if (player == null || item == null) return false;
 		if (player.isInPrison()) {
 			PacketSendUtility.sendPacket(player, SM_SYSTEM_MESSAGE.STR_MSG_ACCUSE_TARGET_IS_NOT_VALID());
 			return false;

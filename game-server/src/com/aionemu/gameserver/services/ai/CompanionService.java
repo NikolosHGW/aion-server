@@ -98,6 +98,7 @@ public final class CompanionService {
 		new DefaultCompanionPlayerCreationGateway());
 	private final CombatContributionOwnerResolver contributionResolver = CombatContributionOwnerResolver.getInstance();
 	private final CompanionSessions<Player, CompanionSession> sessions = new CompanionSessions<>();
+	private final Map<Player, com.aionemu.gameserver.dao.CompanionItemTransferDAO.Request> itemTransfers = new ConcurrentHashMap<>();
 	private final Map<Integer, Object> ownershipOperations = new ConcurrentHashMap<>();
 	private final Map<Player, String> lastRemovalReasons = Collections.synchronizedMap(new WeakHashMap<>());
 
@@ -361,6 +362,68 @@ public final class CompanionService {
 			if (lease.session() == null && companion != null)
 				releaseRuntimeOnlyReferences(companion, templateDatabaseName);
 			throw e;
+		}
+	}
+
+	public List<String> items(Player requester) {
+		return withOwner(requester, current -> {
+			Player body = current.controlledPlayer().getPlayer();
+			var values = new ArrayList<>(body.getInventory().getItemsWithKinah());
+			values.addAll(body.getEquipment().getEquippedItems());
+			return values.stream().map(i -> i.getObjectId() + " | " + i.getItemName() + " x" + i.getItemCount()
+				+ (i.isEquipped() ? " equipped slot=" + i.getEquipmentSlot() : " bag")).toList();
+		});
+	}
+
+	public String itemAction(Player requester, String action, int itemId, long slot) {
+		return withOwner(requester, current -> {
+			Player body = current.controlledPlayer().getPlayer();
+			if (!AIConfig.ENABLED || !AIConfig.COMPANIONS_ENABLED || !AIConfig.COMPANION_ITEMS_ENABLED
+				|| current.progression() == null || requester.getClientConnection() == null || !requester.isSpawned()
+				|| !body.isSpawned() || World.getInstance().getPlayer(body.getObjectId()) != body
+				|| World.getInstance().getPlayer(requester.getObjectId()) != requester
+				|| requester.isDead() || body.isDead() || body.getLifeStats().isAboutToDie()
+				|| requester.getWorldId() != body.getWorldId() || requester.getInstanceId() != body.getInstanceId()
+				|| !PositionUtil.isInRange(requester, body, 10) || body.isCasting()
+				|| body.getController().hasScheduledTask(com.aionemu.gameserver.model.TaskId.ITEM_USE)
+				|| current.combatController().holdsMovement()) throw new IllegalStateException("Items unavailable or companion busy");
+			if (action.equals("give") || action.equals("take")) {
+				var item = (action.equals("give") ? requester : body).getInventory().getItemByObjId(itemId);
+				if (!com.aionemu.gameserver.services.ai.items.CompanionItemPolicy.transferable(item))
+					throw new IllegalArgumentException("Choose a whole, unbound, tradeable, non-expiring inventory item");
+				var request = new com.aionemu.gameserver.dao.CompanionItemTransferDAO.Request(java.util.UUID.randomUUID(), requester, body, item, item.getItemCount(), action.equals("give"));
+				var prior = itemTransfers.putIfAbsent(requester, request);
+				if (prior != null && (prior.item() != item || prior.toBody() != request.toBody()))
+					throw new IllegalStateException("Another handover is pending; use items cancel first");
+				return "PENDING_LOGOUT receipt=" + (prior == null ? request.id() : prior.id())
+					+ ". Exit to character selection to hand over; changed/full inventory rejects it. A server crash cancels an unexecuted request.";
+			}
+			if (body.getMoveController().isInMove()) current.movementActions().stopMove();
+			boolean result = switch (action) {
+				case "equip" -> com.aionemu.gameserver.services.ai.items.CompanionItems.equip(body, itemId, slot);
+				case "unequip" -> com.aionemu.gameserver.services.ai.items.CompanionItems.equip(body, itemId, 0);
+				case "use" -> com.aionemu.gameserver.services.ai.items.CompanionItems.use(body, itemId,
+					() -> AIConfig.ENABLED && AIConfig.COMPANIONS_ENABLED && AIConfig.COMPANION_ITEMS_ENABLED && sessions.usable(current.lease()));
+				default -> throw new IllegalArgumentException("Unknown item action");
+			};
+			return result ? "Native item action completed" : "Native rules rejected item action (supported: ordinary equipment and instant HP/MP potions)";
+		});
+	}
+
+	public boolean cancelItemTransfer(Player owner) { return itemTransfers.remove(owner) != null; }
+
+	/** Called before the native leave-world guard is released; no subsequent writes of this incarnation. */
+	public void finishItemTransferAfterLogout(Player owner) {
+		var request = itemTransfers.remove(owner);
+		if (request == null) return;
+		try {
+			if (!AIConfig.ENABLED || !AIConfig.COMPANIONS_ENABLED || !AIConfig.COMPANION_ITEMS_ENABLED
+				|| sessions.byBody(request.body().getObjectId()) != null || ownershipOperations.containsKey(owner.getObjectId()))
+				throw new IllegalStateException("Handover disabled or companion cleanup incomplete");
+			com.aionemu.gameserver.dao.CompanionItemTransferDAO.commit(request);
+			log.info("AI_COMPANION_ITEM_TRANSFER committed owner={} receipt={} item={}", owner.getObjectId(), request.id(), request.item().getObjectId());
+		} catch (RuntimeException failure) {
+			log.error("AI_COMPANION_ITEM_TRANSFER unconfirmed owner={} receipt={}", owner.getObjectId(), request.id(), failure);
 		}
 	}
 

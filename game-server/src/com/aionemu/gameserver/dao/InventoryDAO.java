@@ -28,6 +28,7 @@ import com.aionemu.gameserver.utils.idfactory.IDFactory;
  * @author ATracer
  */
 public class InventoryDAO {
+	static final java.util.concurrent.locks.ReentrantReadWriteLock ITEM_HANDOVER_LOCK = new java.util.concurrent.locks.ReentrantReadWriteLock(true);
 
 	private static final Logger log = LoggerFactory.getLogger(InventoryDAO.class);
 
@@ -216,6 +217,17 @@ public class InventoryDAO {
 	}
 
 	public static boolean store(List<Item> items, Integer playerId, Integer accountId, Integer legionId) {
+		var lock = ITEM_HANDOVER_LOCK.readLock();
+		lock.lock();
+		try { return storeWithoutHandover(items, playerId, accountId, legionId); }
+		finally { lock.unlock(); }
+	}
+
+	private static boolean storeWithoutHandover(List<Item> items, Integer playerId, Integer accountId, Integer legionId) {
+		if (items.stream().anyMatch(CompanionItemTransferDAO::isRetired)) {
+			log.warn("Refused stale inventory batch after companion handover for player {}", playerId);
+			return false;
+		}
 		Collection<Item> itemsToUpdate = items.stream().filter(Persistable.CHANGED).collect(Collectors.toList());
 		Collection<Item> itemsToInsert = items.stream().filter(Persistable.NEW).collect(Collectors.toList());
 		Collection<Item> itemsToDelete = items.stream().filter(Persistable.DELETED).collect(Collectors.toList());
