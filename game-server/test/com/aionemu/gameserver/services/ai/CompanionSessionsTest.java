@@ -22,6 +22,24 @@ class CompanionSessionsTest {
 	private final Object ownerB = new Object();
 
 	@Test
+	void retryAfterRelogOnlyFindsCancelledIncarnationAndKeepsBodyReservedUntilCommit() {
+		var first = sessions.reserve(1, ownerA, 2);
+		sessions.claimBody(first, 101);
+		sessions.publish(first, new AtomicInteger());
+		assertNull(sessions.pendingRemoval(1));
+		sessions.cancel(first);
+		assertSame(first, sessions.pendingRemoval(1));
+		assertNull(sessions.byOwner(1, new Object()));
+		assertThrows(IllegalStateException.class, () -> sessions.reserve(1, new Object(), 2));
+		assertNull(sessions.pendingRemoval(2));
+		sessions.release(first);
+		var replacement = sessions.reserve(1, new Object(), 2);
+		assertNull(sessions.pendingRemoval(1));
+		sessions.release(first);
+		assertTrue(sessions.usable(replacement));
+	}
+
+	@Test
 	void twoOwnersHaveIndependentCommandsAndStatusAndCannotUseAnotherRuntimeIdentity() {
 		var first = sessions.reserve(1, ownerA, 2);
 		var second = sessions.reserve(2, ownerB, 2);

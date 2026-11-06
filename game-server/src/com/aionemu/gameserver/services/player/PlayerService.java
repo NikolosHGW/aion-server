@@ -111,6 +111,15 @@ public class PlayerService {
 	 * Loads a complete player. Set {@code initializeMissingPersistentData} to false for read-only runtime materialization.
 	 */
 	public static Player getPlayer(int playerObjId, Account account, boolean initializeMissingPersistentData) {
+		return getPlayer(playerObjId, account, initializeMissingPersistentData, true);
+	}
+
+	/** Closed AI-host accounts do not lend account-wide entitlements or progress to their bodies. */
+	public static Player getServerControlledPlayer(int playerObjId, Account account) {
+		return getPlayer(playerObjId, account, false, false);
+	}
+
+	private static Player getPlayer(int playerObjId, Account account, boolean initializeMissingPersistentData, boolean loadAccountState) {
 		// Player common data and appearance should be already loaded in account
 		PlayerAccountData playerAccountData = account.getPlayerAccountData(playerObjId);
 		PlayerCommonData pcd = playerAccountData.getPlayerCommonData();
@@ -133,7 +142,8 @@ public class PlayerService {
 		AbyssRankDAO.loadAbyssRank(player);
 		PlayerNpcFactionsDAO.loadNpcFactions(player);
 		MotionDAO.loadMotionList(player);
-		AccountPassportsDAO.loadPassport(player.getAccount(), initializeMissingPersistentData);
+		if (loadAccountState)
+			AccountPassportsDAO.loadPassport(player.getAccount(), initializeMissingPersistentData);
 		player.setEffectController(new PlayerEffectController(player));
 		player.setFlyController(new FlyController(player));
 		PlayerStatFunctions.addPredefinedStatFunctions(player);

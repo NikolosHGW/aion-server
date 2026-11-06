@@ -29,7 +29,8 @@ class StageOneSourceBoundaryTest {
 
 	@Test
 	void runtimeTemplateChangesCannotInvokeDaoSaveOrCreateFakeConnection() throws IOException {
-		String source = readAiSources();
+		// The historical template stays read-only; C2 permits only product bodies to checkpoint.
+		String source = Files.readString(Path.of("src/com/aionemu/gameserver/services/ai/ServerControlledPlayerService.java"));
 		assertFalse(source.contains("DAO."));
 		assertFalse(source.contains("new AionConnection"));
 		assertFalse(source.contains("setClientConnection"));

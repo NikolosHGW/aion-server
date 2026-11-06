@@ -84,6 +84,7 @@ public class Player extends Creature {
 	public volatile InRoll inRoll;
 	private final PlayerAccountData playerAccountData;
 	private final Account playerAccount;
+	private String serverControlledDisplayName;
 	private LegionMember legionMember;
 
 	private Macros macros;
@@ -241,12 +242,23 @@ public class Player extends Creature {
 	}
 
 	public String getName(boolean displayCustomTag) {
+		if (serverControlledDisplayName != null)
+			return serverControlledDisplayName;
 		if (displayCustomTag && AdminConfig.NAME_TAGS.length > 0) {
 			int index = playerAccount.getAccessLevel() - 1;
 			if (index >= 0 && index < AdminConfig.NAME_TAGS.length)
 				return String.format(AdminConfig.NAME_TAGS[index], getCommonData().getName());
 		}
 		return getCommonData().getName();
+	}
+
+	/** Presentation only: persistent common data always retains the database identity. */
+	public void setServerControlledDisplayName(String name) {
+		if (getClientConnection() != null || isInWorld() || isSpawned())
+			throw new IllegalStateException("Display name can only change on a detached server-controlled body");
+		if (name != null && name.isBlank())
+			throw new IllegalArgumentException("Display name must not be blank");
+		serverControlledDisplayName = name;
 	}
 
 	public PlayerAppearance getPlayerAppearance() {

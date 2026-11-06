@@ -81,6 +81,17 @@ public class AccountService {
 		return account;
 	}
 
+	/** Materialize one AI body without account-wide inventory or sibling character state. */
+	public static Account loadServerControlledAccount(int accountId, String accountName, int playerId) {
+		if (!PlayerDAO.getPlayerOidsOnAccount(accountId).contains(playerId))
+			throw new IllegalArgumentException("Body does not belong to the configured AI account");
+		Account account = new Account(accountId);
+		account.setName(accountName);
+		account.addPlayerAccountData(loadPlayerAccountData(playerId));
+		account.setAccountWarehouse(new PlayerStorage(null, StorageType.ACCOUNT_WAREHOUSE));
+		return account;
+	}
+
 	public static PlayerAccountData loadPlayerAccountData(int playerId) {
 		PlayerCommonData playerCommonData = PlayerDAO.loadPlayerCommonData(playerId);
 		CharacterBanInfo cbi = PlayerPunishmentsDAO.getCharBanInfo(playerId);

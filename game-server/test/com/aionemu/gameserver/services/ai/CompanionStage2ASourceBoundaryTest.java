@@ -50,7 +50,7 @@ class CompanionStage2ASourceBoundaryTest {
 		assertFalse(source.contains("new AionConnection"));
 		assertFalse(source.contains(".addTask(TaskId.PLAYER_UPDATE"));
 		assertFalse(source.contains(".addTask(TaskId.INVENTORY_UPDATE"));
-		assertTrue(source.contains("PlayerService.getPlayer(objectId, account, false)"));
+		assertTrue(source.contains("PlayerService.getServerControlledPlayer(objectId, account)"));
 		assertTrue(source.contains("SpawnTransaction.execute"));
 		assertTrue(source.contains("verifyAbsent(newSession)"));
 	}

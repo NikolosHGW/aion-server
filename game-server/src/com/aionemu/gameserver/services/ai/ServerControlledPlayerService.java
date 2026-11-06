@@ -65,7 +65,7 @@ public final class ServerControlledPlayerService {
 			player = PlayerService.getPlayer(objectId, account, false);
 			validateLoadedPlayer(player);
 			List<RoutePoint> route = buildAndValidateRoute(player, admin);
-			player.getCommonData().setName(runtimeName);
+			player.setServerControlledDisplayName(runtimeName);
 			RouteServerPlayerController routeController = new RouteServerPlayerController(player,
 				new RouteController(route, AIConfig.SYNTHETIC_ROUTE_ARRIVAL_TOLERANCE));
 			controlledPlayer = new ServerControlledPlayer(player, templateDatabaseName, runtimeName, SyntheticPlayerRole.ROUTE_SPIKE, routeController,
@@ -308,7 +308,7 @@ public final class ServerControlledPlayerService {
 	}
 
 	private void releaseRuntimeOnlyReferences(Player player, String templateDatabaseName) {
-		player.getCommonData().setName(templateDatabaseName);
+		player.setServerControlledDisplayName(null);
 		player.getInventory().setOwner(null);
 		player.getWarehouse().setOwner(null);
 		player.getAccount().getAccountWarehouse().setOwner(null);

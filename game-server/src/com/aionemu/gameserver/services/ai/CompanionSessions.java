@@ -61,6 +61,12 @@ final class CompanionSessions<O, S> {
 		return bodies.get(bodyId);
 	}
 
+	/** Only a cancelled incarnation may be recovered by the same persistent owner after relog. */
+	synchronized Lease<O, S> pendingRemoval(int ownerId) {
+		Lease<O, S> lease = owners.get(ownerId);
+		return lease != null && lease.cancelled && lease.session != null ? lease : null;
+	}
+
 	synchronized boolean contains(Lease<O, S> lease) {
 		return owners.get(lease.ownerId) == lease;
 	}
