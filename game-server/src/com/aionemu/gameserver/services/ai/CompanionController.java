@@ -25,6 +25,10 @@ public final class CompanionController implements ServerPlayerController {
 	private final BooleanSupplier combatCatchUpSuppressed;
 	private final BooleanSupplier actionHoldsMovement;
 	private final CompanionOwnerBreadcrumbTrail ownerTrail = new CompanionOwnerBreadcrumbTrail();
+	private final MovementProgressWatchdog progress = new MovementProgressWatchdog();
+	private boolean recoveryExhausted;
+	private float[] destination;
+	private long destinationDeadline;
 	private CompanionMode mode = CompanionMode.FOLLOWING;
 	private boolean followRequested = true;
 	private boolean movementIssued;
@@ -78,13 +82,13 @@ public final class CompanionController implements ServerPlayerController {
 
 	@Override
 	public void tick() {
-		runtimeMaintenance.run();
 		String removalReason = getRemovalReason();
 		if (removalReason != null) {
 			clearFollowRuntime(removalReason);
 			removalRequest.accept(removalReason);
 			return;
 		}
+		runtimeMaintenance.run();
 		tickMovement();
 	}
 
@@ -93,19 +97,32 @@ public final class CompanionController implements ServerPlayerController {
 			return;
 		long now = currentTimeMillis.getAsLong();
 		if (context.ownerDead()) {
+			pauseProgress(now);
+			destination = null;
 			if (mode != CompanionMode.BLOCKED || now >= nextBlockedRetryAt)
 				block(policyRejection(MovementRejectionReason.OWNER_DEAD), now);
 			return;
 		}
+		if (!context.supportedGroundMovement()) {
+			pauseProgress(now); destination = null;
+			if (mode != CompanionMode.BLOCKED || now >= nextBlockedRetryAt)
+				block(policyRejection(MovementRejectionReason.UNSUPPORTED_TRAVEL), now);
+			return;
+		}
+		if (recoveryExhausted) return;
+		if (destination != null) { tickDestination(now); return; }
 		if (!followRequested) {
+			pauseProgress(now);
 			mode = CompanionMode.STAYING;
 			return;
 		}
 		// Native onStopMove also cancels casts. Do not repeatedly stop an already stationary caster.
 		if (actionHoldsMovement.getAsBoolean()) {
+			pauseProgress(now);
 			movementIssued = false;
 			return;
 		}
+		if (detectStall(now)) return;
 		ownerTrail.sample(context.ownerMapId(), context.ownerInstanceId(), context.ownerX(), context.ownerY(), context.ownerZ(),
 			context.ownerHeading(), context.ownerEffectiveGroundSpeed(), now);
 		double distance = context.distanceToOwner();
@@ -276,6 +293,7 @@ public final class CompanionController implements ServerPlayerController {
 		if (!context.ownerInWorld() || !context.ownerSpawned()) {
 			return "owner-left-world";
 		}
+		if (context.companionDead()) return "companion-dead";
 		if (!context.companionInWorld() || !context.companionSpawned()) {
 			return "companion-left-world";
 		}
@@ -285,9 +303,59 @@ public final class CompanionController implements ServerPlayerController {
 		return null;
 	}
 
+	/** A checked local ground segment, never a teleport or an inferred long-distance route. */
+	public synchronized MovementResult navigate(float x, float y, float z) {
+		if (getRemovalReason() != null || mode == CompanionMode.REMOVING || context.ownerDead() || !context.supportedGroundMovement()
+			|| actionHoldsMovement.getAsBoolean()) throw new IllegalStateException("Navigation unavailable");
+		double ownerRange = PositionUtil.getDistance(context.ownerX(), context.ownerY(), context.ownerZ(), x, y, z);
+		double actorRange = PositionUtil.getDistance(context.companionX(), context.companionY(), context.companionZ(), x, y, z);
+		if (!Double.isFinite(ownerRange + actorRange) || ownerRange > 20 || actorRange > 20)
+			throw new IllegalArgumentException("Choose a ground destination within 20m of you and your companion");
+		MovementResult checked = gateway.checkMovement(MovementIntent.OWNER_DESTINATION, x, y, z);
+		if (!checked.success()) return checked;
+		stay();
+		destination = new float[] { checked.resolvedX(), checked.resolvedY(), checked.resolvedZ() };
+		destinationDeadline = currentTimeMillis.getAsLong() + 30_000;
+		return startDestination(currentTimeMillis.getAsLong());
+	}
+
+	private MovementResult startDestination(long now) {
+		MovementResult checked = gateway.checkMovement(MovementIntent.OWNER_DESTINATION, destination[0], destination[1], destination[2]);
+		MovementResult result = checked.success() ? gateway.startMove(MovementIntent.OWNER_DESTINATION, checked, Float.NaN) : checked;
+		recordAttempt(result, now);
+		if (!result.success()) block(result, now);
+		else {
+			destination = new float[] { result.resolvedX(), result.resolvedY(), result.resolvedZ() };
+			pauseProgress(now); movementIssued = true; mode = CompanionMode.NAVIGATING;
+		}
+		return result;
+	}
+
+	private void tickDestination(long now) {
+		if (now >= destinationDeadline) {
+			destination = null; block(policyRejection(MovementRejectionReason.NAVIGATION_TIMEOUT), now); recoveryExhausted = true; return;
+		}
+		if (PositionUtil.getDistance(context.companionX(), context.companionY(), context.companionZ(), destination[0], destination[1], destination[2]) <= 0.5) {
+			stay(); return;
+		}
+		if (detectStall(now)) return;
+		if (!movementIssued && now >= nextBlockedRetryAt) startDestination(now);
+	}
+
+	private boolean detectStall(long now) {
+		if (!progress.stalled(now, context.companionX(), context.companionY(), context.companionZ(), movementIssued)) return false;
+		block(policyRejection(MovementRejectionReason.NO_PROGRESS), now); return true;
+	}
+
+	private void pauseProgress(long now) {
+		progress.stalled(now, context.companionX(), context.companionY(), context.companionZ(), false);
+	}
+
 	public synchronized void follow() {
 		if (mode == CompanionMode.REMOVING)
 			return;
+		if (destination != null) stop();
+		destination = null; progress.reset(); recoveryExhausted = false;
 		followRequested = true;
 		mode = CompanionMode.FOLLOWING;
 		nextDestinationUpdateAt = 0;
@@ -303,6 +371,7 @@ public final class CompanionController implements ServerPlayerController {
 	public synchronized void stay() {
 		if (mode == CompanionMode.REMOVING)
 			return;
+		destination = null; progress.reset(); recoveryExhausted = false;
 		followRequested = false;
 		gateway.stopMove();
 		movementIssued = false;
@@ -315,6 +384,8 @@ public final class CompanionController implements ServerPlayerController {
 		clearLocomotion("STAY");
 	}
 
+	public synchronized void cancelNavigation() { if (destination != null) stay(); }
+
 	@Override
 	public synchronized void stop() {
 		gateway.stopMove();
@@ -323,6 +394,7 @@ public final class CompanionController implements ServerPlayerController {
 	}
 
 	public synchronized void beginRemoval() {
+		destination = null; progress.reset();
 		mode = CompanionMode.REMOVING;
 		followRequested = false;
 		ownerTrail.reset("REMOVING");
@@ -362,6 +434,8 @@ public final class CompanionController implements ServerPlayerController {
 			+ ", lastAttemptedDestination=" + describeAttempted(lastAttempt)
 			+ ", lastResolvedDestination=" + describeResolved(lastAttempt)
 			+ ", consecutiveMovementRetries=" + consecutiveRetryCount
+			+ ", recoveryExhausted=" + recoveryExhausted + ", noProgressWindows=" + progress.stalls()
+			+ ", destinationDeadline=" + (destination == null ? 0 : destinationDeadline)
 			+ ", movementBlockedSince=" + blockedSince
 			+ ", movementLastAttempt=" + lastAttemptAt
 			+ ", movementLastRecovery=" + lastRecoveryAt
@@ -402,7 +476,11 @@ public final class CompanionController implements ServerPlayerController {
 			blockedSince = now;
 		mode = CompanionMode.BLOCKED;
 		currentRejection = rejection;
-		consecutiveRetryCount++;
+		boolean retryFailure = rejection.reason() != MovementRejectionReason.OWNER_DEAD && rejection.reason() != MovementRejectionReason.UNSUPPORTED_TRAVEL;
+		consecutiveRetryCount = retryFailure ? consecutiveRetryCount + 1 : 0;
+		if (retryFailure && (consecutiveRetryCount >= 5 || progress.exhausted())) {
+			recoveryExhausted = true; destination = null;
+		}
 		nextBlockedRetryAt = now + settings.blockedRetryIntervalMs();
 		localRecoveryActive = false;
 	}

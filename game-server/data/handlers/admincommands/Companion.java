@@ -14,6 +14,7 @@ public class Companion extends AdminCommand {
 			<sources> - List your account characters as appearance/class templates.
 			<create SourceName [Nickname|-] [Specialization]> - Create once; '-' keeps the source nickname. Basic classes need specialization.
 			<summon> - Spawn your already-created persistent companion.
+			<move here|target> - Walk to a checked local destination and stay.
 			<follow> - Resume following you.
 			<stay> - Stop and remain in the world.
 			<assist on|off|status> - Arm or disarm one-hit reactions to owner attack events.
@@ -37,6 +38,9 @@ public class Companion extends AdminCommand {
 	}
 
 	private void executeOwned(Player admin, String... params) {
+		if (params.length == 2 && params[0].equalsIgnoreCase("move") && java.util.Set.of("here", "target").contains(params[1].toLowerCase())) {
+			sendInfo(admin, CompanionService.getInstance().navigate(admin, params[1].equalsIgnoreCase("target"))); return;
+		}
 		if (params.length >= 2 && params[0].equalsIgnoreCase("items")) {
 			var service = CompanionService.getInstance();
 			String action = params[1].toLowerCase();

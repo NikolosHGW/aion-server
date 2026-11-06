@@ -16,6 +16,87 @@ import com.aionemu.gameserver.services.ai.PlayerActionGateway.MovementRejectionR
 import com.aionemu.gameserver.services.ai.PlayerActionGateway.MovementResult;
 
 class CompanionControllerTest {
+	@Test void companionDeathRequestsCleanupBeforeAnyFurtherMovement() {
+		context.companionDead = true; context.distance = 8; controller.tick();
+		assertEquals("companion-dead", removalReason.get()); assertEquals(0, gateway.startCount);
+	}
+	@Test void repeatedCollisionStopsAfterBoundedAttemptsUntilExplicitFollow() {
+		context.distance = 20; gateway.defaultCheckRejection = MovementRejectionReason.COLLISION;
+		for (int i = 0; i < 50; i++) { controller.tick(); clock.addAndGet(1_000); }
+		assertEquals(15, gateway.checkCount);
+		assertTrue(controller.getMovementDiagnostics().contains("recoveryExhausted=true"));
+		controller.follow(); controller.tick(); assertEquals(18, gateway.checkCount);
+	}
+
+	@Test void refreshingDestinationCannotHideStationaryBody() {
+		context.distance = 8;
+		for (int i = 0; i < 200; i++) { controller.tick(); clock.addAndGet(400); }
+		assertTrue(controller.getMovementDiagnostics().contains("recoveryExhausted=true"));
+		assertEquals("NO_PROGRESS", controller.getLastBlockedReason());
+		int starts = gateway.startCount;
+		for (int i = 0; i < 20; i++) { controller.tick(); clock.addAndGet(400); }
+		assertEquals(starts, gateway.startCount);
+	}
+
+	@Test void actualProgressAllowsLongContinuousFollow() {
+		context.distance = 8;
+		for (int i = 0; i < 100; i++) {
+			controller.tick(); clock.addAndGet(400); context.companionX += 0.5f;
+		}
+		assertFalse(controller.getMovementDiagnostics().contains("recoveryExhausted=true"));
+	}
+
+	@Test void flightWaitsWithoutGroundPathRequestsAndLandingResumes() {
+		context.distance = 8; context.groundMovement = false;
+		for (int i = 0; i < 20; i++) { controller.tick(); clock.addAndGet(1_000); }
+		assertEquals(0, gateway.checkCount); assertEquals("UNSUPPORTED_TRAVEL", controller.getLastBlockedReason());
+		context.groundMovement = true; controller.tick(); assertEquals(1, gateway.startCount);
+	}
+
+	@Test void ownerDeathDoesNotConsumeRecoveryBudgetAndRevivalResumes() {
+		context.distance = 8; context.dead = true;
+		for (int i = 0; i < 20; i++) { controller.tick(); clock.addAndGet(1_000); }
+		assertFalse(controller.getMovementDiagnostics().contains("recoveryExhausted=true"));
+		context.dead = false; gateway.defaultCheckRejection = MovementRejectionReason.COLLISION; controller.tick();
+		assertFalse(controller.getMovementDiagnostics().contains("recoveryExhausted=true"));
+		gateway.defaultCheckRejection = MovementRejectionReason.NONE; clock.addAndGet(1_000); controller.tick(); assertEquals(1, gateway.startCount);
+	}
+
+	@Test void removedOwnerCannotRunMaintenanceBeforeCleanup() {
+		var calls = new java.util.concurrent.atomic.AtomicInteger();
+		var guarded = new CompanionController(context, gateway, new CompanionFollowSettings(6, 3, 2, 400, 1000),
+			removalReason::set, clock::get, calls::incrementAndGet);
+		context.connected = false; guarded.tick();
+		assertEquals(0, calls.get()); assertEquals("owner-disconnected", removalReason.get());
+	}
+
+	@Test void localDestinationArrivesAndStaysWithoutImplicitFollow() {
+		context.companionX = 10; context.companionY = 20; context.companionZ = 30;
+		var result = controller.navigate(12, 20, 30);
+		assertTrue(result.success()); assertEquals(CompanionMode.NAVIGATING, controller.getMode());
+		context.companionX = result.resolvedX(); context.companionY = result.resolvedY(); context.companionZ = result.resolvedZ();
+		clock.addAndGet(400); controller.tick();
+		assertEquals(CompanionMode.STAYING, controller.getMode()); assertFalse(controller.isFollowingRequested());
+		assertTrue(gateway.intents.stream().allMatch(i -> i == MovementIntent.OWNER_DESTINATION));
+	}
+
+	@Test void localDestinationRejectsFarCoordinatesAndHasFixedDeadline() {
+		context.companionX = 10; context.companionY = 20; context.companionZ = 30;
+		assertThrows(IllegalArgumentException.class, () -> controller.navigate(1000, 20, 30));
+		assertThrows(IllegalArgumentException.class, () -> controller.navigate(Float.NaN, 20, 30));
+		controller.navigate(12, 20, 30); clock.set(30_000); controller.tick();
+		assertEquals("NAVIGATION_TIMEOUT", controller.getLastBlockedReason());
+		assertTrue(controller.getMovementDiagnostics().contains("recoveryExhausted=true"));
+	}
+
+	@Test void navigationCanBeCancelledByFeatureRollbackOrOwnerCommand() {
+		context.companionX = 10; context.companionY = 20; context.companionZ = 30;
+		controller.navigate(12, 20, 30); controller.cancelNavigation();
+		assertEquals(CompanionMode.STAYING, controller.getMode());
+		controller.navigate(12, 20, 30); controller.follow();
+		assertEquals(CompanionMode.FOLLOWING, controller.getMode());
+	}
+
 	@Test void nativeCastPreventsFollowFromMovingOrCancellingStationaryCaster() {
 		var casting = new java.util.concurrent.atomic.AtomicBoolean(true);
 		var controller = new CompanionController(context, gateway, new CompanionFollowSettings(6, 3, 2, 400, 1000),
@@ -486,6 +567,8 @@ class CompanionControllerTest {
 	}
 
 	private static final class TestContext implements CompanionContext {
+		private boolean companionDead;
+		@Override public boolean companionDead() { return companionDead; }
 
 		private boolean connected = true;
 		private boolean inWorld = true;

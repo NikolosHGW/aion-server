@@ -279,6 +279,7 @@ public final class CompanionService {
 			CompanionController controller = new CompanionController(new PlayerCompanionContext(owner, companion),
 				movementActions, settings, reason -> dismissFromRuntime(lease, reason), System::currentTimeMillis, () -> {
 					movementActions.poll();
+					if (!AIConfig.COMPANION_NAVIGATION_ENABLED && lease.session() != null) lease.session().controller().cancelNavigation();
 					if (progression != null && progression.needsSynchronization()) {
 						combatGateway.stop("profile-synchronization");
 						if (!progression.ready()) return;
@@ -427,6 +428,20 @@ public final class CompanionService {
 		}
 	}
 
+	public String navigate(Player requester, boolean selectedTarget) {
+		return withOwner(requester, current -> {
+			if (!AIConfig.ENABLED || !AIConfig.COMPANIONS_ENABLED || !AIConfig.COMPANION_NAVIGATION_ENABLED
+				|| requester.getClientConnection() == null) throw new IllegalStateException("Navigation disabled");
+			var target = selectedTarget ? requester.getTarget() : requester;
+			if (target == null || target.getWorldId() != requester.getWorldId() || target.getInstanceId() != requester.getInstanceId()
+				|| selectedTarget && !requester.getKnownList().knows(target)) throw new IllegalArgumentException("Select a visible local destination");
+			current.combatController().disableAssist("owner-navigation");
+			var result = current.controller().navigate(target.getX(), target.getY(), target.getZ());
+			return result.success() ? "Moving to the checked ground destination; will stay on arrival. Use follow to resume escort."
+				: "Navigation rejected: " + result.reason();
+		});
+	}
+
 	public void follow(Player requester) {
 		withOwner(requester, current -> {
 			current.controller().follow();
@@ -447,6 +462,7 @@ public final class CompanionService {
 
 	private boolean assistOn(CompanionSession current, Player requester) {
 		requireCombatFeatureEnabled();
+		current.controller().cancelNavigation();
 		return current.combatController().enableAssist();
 	}
 

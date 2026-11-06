@@ -32,6 +32,8 @@ interface CompanionContext {
 
 	boolean companionSpawned();
 
+	default boolean companionDead() { return false; }
+
 	int companionMapId();
 
 	int companionInstanceId();

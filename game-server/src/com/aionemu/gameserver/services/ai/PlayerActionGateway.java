@@ -22,6 +22,7 @@ public interface PlayerActionGateway {
 	enum MovementIntent {
 		OWNER_OFFSET,
 		OWNER_BREADCRUMB,
+		OWNER_DESTINATION,
 		COMBAT_APPROACH
 	}
 
@@ -35,6 +36,9 @@ public interface PlayerActionGateway {
 	enum MovementRejectionReason {
 		NONE,
 		OWNER_DEAD,
+		NO_PROGRESS,
+		NAVIGATION_TIMEOUT,
+		UNSUPPORTED_TRAVEL,
 		DISTANCE_NOT_FINITE,
 		DESTINATION_NOT_FINITE,
 		GEODATA_OR_LOS_DISABLED,

@@ -93,6 +93,8 @@ final class PlayerCompanionContext implements CompanionContext {
 		return companion.isSpawned();
 	}
 
+	@Override public boolean companionDead() { return companion.isDead(); }
+
 	@Override
 	public int companionMapId() {
 		return companion.getWorldId();

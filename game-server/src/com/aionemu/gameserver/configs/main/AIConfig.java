@@ -138,6 +138,9 @@ public class AIConfig {
 	@Property(key = "ai.synthetic_players.scheduler_budget_ms", defaultValue = "2")
 	public static long SYNTHETIC_SCHEDULER_BUDGET_MS;
 
+	@Property(key = "ai.companions.navigation.enabled", defaultValue = "false")
+	public static boolean COMPANION_NAVIGATION_ENABLED;
+
 	@Property(key = "ai.companions.items.enabled", defaultValue = "false")
 	public static boolean COMPANION_ITEMS_ENABLED;
 
