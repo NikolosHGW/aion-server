@@ -61,8 +61,9 @@ public final class CompanionC8RuntimeProbe {
 		World.getInstance().setPosition(actor,210010000,1,x,1042.47f,144.726f,(byte)33);
 		World.getInstance().storeObject(actor); World.getInstance().spawn(actor); actor.getLifeStats().cancelAllTasks();
 	}
-	private record Actor(Player owner, Player body, ServerControlledPlayer wrapper, AtomicInteger ticks, AtomicBoolean connected) { }
-	private static Actor actor(int index, CompanionService service, SyntheticPlayerScheduler scheduler) throws Exception {
+	// Shared native fixture for later slices; production connectivity checks remain unchanged.
+	static record Actor(Player owner, Player body, ServerControlledPlayer wrapper, AtomicInteger ticks, AtomicBoolean connected) { }
+	static Actor actor(int index, CompanionService service, SyntheticPlayerScheduler scheduler) throws Exception {
 		var creator=new DefaultCompanionPlayerCreationGateway(); var dao=new CompanionPersistenceDAO();
 		String suffix=String.valueOf((char)('a'+index)), name="Cloadowner"+suffix, accountName="c8_owner_"+suffix;
 		int account=790100+index;

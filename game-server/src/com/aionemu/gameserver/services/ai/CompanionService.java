@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
 import java.util.UUID;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -23,6 +24,8 @@ import com.aionemu.gameserver.services.ai.creation.CompanionCreationClaim;
 import com.aionemu.gameserver.services.ai.progression.CompanionProgression;
 import com.aionemu.gameserver.services.ai.memory.CompanionEpisodeService;
 import com.aionemu.gameserver.services.ai.memory.QuestCompletionEvidence;
+import com.aionemu.gameserver.services.ai.story.CompanionStory;
+import com.aionemu.gameserver.services.ai.story.CompanionStoryService;
 import com.aionemu.gameserver.questEngine.model.QuestState;
 import com.aionemu.gameserver.dao.CompanionBodyDAO;
 import com.aionemu.gameserver.geoEngine.collision.IgnoreProperties;
@@ -478,6 +481,60 @@ public final class CompanionService {
 		return withOwner(requester, current -> current.combatController().status());
 	}
 
+	public CompanionStory.Reply storyStatus(Player requester) {
+		if (!CompanionStoryService.flagsEnabled())
+			return CompanionStory.Reply.of(CompanionStory.Kind.DISABLED, null, "Предложения по личной истории сейчас отключены.");
+		return CompanionStoryService.getInstance().status(storyOwner(requester));
+	}
+
+	public CompanionStory.Reply storySuggest(Player requester) {
+		if (!CompanionStoryService.flagsEnabled()) return storyStatus(requester);
+		return withOwner(requester, current -> CompanionStoryService.getInstance().suggest(storyActor(current, requester),
+			() -> storyCandidate(current, requester)));
+	}
+
+	public CompanionStory.Reply storyDecision(Player requester, UUID token, boolean reset) {
+		if (!CompanionStoryService.flagsEnabled()) return storyStatus(requester);
+		return withOwner(requester, current -> CompanionStoryService.getInstance().decide(storyActor(current, requester), token,
+			reset ? CompanionStory.Decision.RESET : CompanionStory.Decision.DECLINED));
+	}
+
+	private CompanionStory.Owner storyOwner(Player owner) {
+		if (!CompanionStoryService.flagsEnabled()) throw new IllegalStateException("Предложения по личной истории сейчас отключены.");
+		if (!QuestCompletionEvidence.validRealm(AIConfig.WORLD_MEMORY_REALM)) throw new IllegalStateException("Память ещё не настроена для этого мира.");
+		return new CompanionStory.Owner(AIConfig.WORLD_MEMORY_REALM, owner.getObjectId(), owner.getAccount().getId());
+	}
+
+	private CompanionStory.Actor storyActor(CompanionSession current, Player owner) {
+		if (current.memoryClaimToken() == null || current.controlledPlayer().getRole() != SyntheticPlayerRole.COMPANION)
+			throw new IllegalStateException("Для личной истории нужен постоянный компаньон.");
+		return new CompanionStory.Actor(storyOwner(owner), current.controlledPlayer().getObjectId(), current.memoryClaimToken());
+	}
+
+	private CompanionStory.Candidate storyCandidate(CompanionSession current, Player owner) {
+		if (owner.isDead() || owner.isInAttackMode() || owner.isCasting() || current.controlledPlayer().getPlayer().isDead()
+			|| current.controlledPlayer().getPlayer().isInAttackMode() || current.controlledPlayer().getPlayer().isCasting())
+			return CompanionStory.Candidate.unavailable("Обсудим следующее занятие, когда будет спокойно.");
+		if (!AIConfig.COMPANION_ACTIVITIES_ENABLED || !AIConfig.COMPANION_QUEST_GOALS_ENABLED || !isQuestExecutionFeatureEnabled()
+			|| !QuestExecutionAllowlist.allows(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS, CompanionStory.QUEST))
+			return CompanionStory.Candidate.unavailable("Помощь с заданием 1120 сейчас отключена.");
+		var chosen = current.goalSession().chosen();
+		if (chosen != null) {
+			var state = owner.getQuestStateList().getQuestState(chosen.questId());
+			if (state == null || state.getStatus() != com.aionemu.gameserver.questEngine.model.QuestStatus.COMPLETE)
+				return CompanionStory.Candidate.unavailable("У вас уже выбрано занятие. Следующий шаг: //companion next.");
+		}
+		var candidate = goalCandidateProvider.provide(owner, CompanionStory.QUEST);
+		if (!candidate.success()) return CompanionStory.Candidate.unavailable("Пока не знаю подходящего занятия в этом месте.");
+		executionPlanProvider.build(candidate.plan()); // Exact curated native manifest, not just a quest ID/name.
+		var state = owner.getQuestStateList().getQuestState(CompanionStory.QUEST);
+		boolean ongoing = state != null && (state.getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.START
+			|| state.getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.REWARD);
+		if (!ongoing && !goalEligibility.check(owner, CompanionStory.QUEST).eligible())
+			return CompanionStory.Candidate.unavailable("Задание 1120 сейчас недоступно или уже завершено. Доступные занятия: //companion activities.");
+		return CompanionStory.Candidate.available(candidate.plan());
+	}
+
 	public List<String> activities(Player requester) {
 		return withOwner(requester, current -> {
 			requireActivitiesEnabled();
@@ -557,9 +614,12 @@ public final class CompanionService {
 
 	private QuestGoalProposalResult proposeGoal(CompanionSession current, Player requester) {
 		requireGoalFeatureEnabled();
+		Set<Integer> declined = CompanionStoryService.flagsEnabled() && current.memoryClaimToken() != null
+			? CompanionStoryService.getInstance().declinedQuests(storyActor(current, requester)) : Set.of();
 		if (AIConfig.COMPANION_QUEST_EXECUTION_ENABLED) {
 			requireExecutionConfiguration();
-			var ids = QuestExecutionAllowlist.parse(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS).stream().sorted().toList();
+			var ids = QuestExecutionAllowlist.parse(AIConfig.COMPANION_QUEST_EXECUTION_ALLOWED_IDS).stream().filter(id -> !declined.contains(id)).sorted().toList();
+			if (ids.isEmpty()) throw new IllegalStateException("Вы отказались от доступного предложения. Другое занятие можно выбрать вручную: //companion activities.");
 			for (int id : ids) {
 				var nativeState = requester.getQuestStateList().getQuestState(id);
 				if (nativeState != null && (nativeState.getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.START
@@ -576,7 +636,7 @@ public final class CompanionService {
 				&& requester.getQuestStateList().getQuestState(id).getStatus() == com.aionemu.gameserver.questEngine.model.QuestStatus.COMPLETE))
 				return QuestGoalProposalResult.alreadyComplete(ids.getLast());
 		}
-		QuestGoalPlanner.ProposalResult proposal = buildGoalProposal(requester);
+		QuestGoalPlanner.ProposalResult proposal = buildGoalProposal(requester, declined);
 		if (!proposal.success()) throw new IllegalStateException(proposal.reason() + "; rejections=" + proposal.rejections());
 		current.executionRuntime().clear("new-offer");
 		current.goalSession().offer(proposal.plan());
@@ -1125,10 +1185,11 @@ public final class CompanionService {
 		return new CompanionCreationRequest(owner.getObjectId(), owner.getRace().name(), owner.getGender().name());
 	}
 
-	private QuestGoalPlanner.ProposalResult buildGoalProposal(Player owner) {
+	private QuestGoalPlanner.ProposalResult buildGoalProposal(Player owner, Set<Integer> declined) {
 		List<Integer> allowedIds = QuestGoalCandidateProvider.parseAllowedQuestIds(AIConfig.COMPANION_QUEST_GOAL_ALLOWED_IDS);
 		List<CandidateAssessment> assessments = new ArrayList<>();
 		for (int questId : allowedIds) {
+			if (declined.contains(questId)) continue;
 			QuestGoalCandidateProvider.CandidateResult candidate = goalCandidateProvider.provide(owner, questId);
 			if (!candidate.success()) {
 				assessments.add(CandidateAssessment.reject(questId, candidate.reason()));

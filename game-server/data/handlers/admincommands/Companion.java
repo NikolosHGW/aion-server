@@ -26,6 +26,8 @@ public class Companion extends AdminCommand {
 			<activities> - List companion activities and available audited quests.
 			<activity escort|support|rest|quest ID> - Choose an activity.
 			<next> - Explain the next step from your native quest journal.
+			<story suggest|status> - Recall a confirmed shared episode and request one suggestion.
+			<story decline|reset OfferUUID> - Remember a refusal or explicitly allow a new suggestion.
 			<today> - Offer one read-only quest goal from the configured allowlist.
 			<goal choose|status|clear> - Manage the persistent quest goal intent.
 			""");
@@ -41,6 +43,16 @@ public class Companion extends AdminCommand {
 	}
 
 	private void executeOwned(Player admin, String... params) {
+		if (params.length >= 2 && params[0].equalsIgnoreCase("story")) {
+			var service = CompanionService.getInstance();
+			String action = params[1].toLowerCase(java.util.Locale.ROOT);
+			if (params.length == 2 && action.equals("status")) service.storyStatus(admin).lines().forEach(line -> sendInfo(admin, line));
+			else if (params.length == 2 && action.equals("suggest")) service.storySuggest(admin).lines().forEach(line -> sendInfo(admin, line));
+			else if (params.length == 3 && java.util.Set.of("decline", "reset").contains(action))
+				service.storyDecision(admin, java.util.UUID.fromString(params[2]), action.equals("reset")).lines().forEach(line -> sendInfo(admin, line));
+			else sendInfo(admin);
+			return;
+		}
 		if (params.length >= 2 && params[0].equalsIgnoreCase("activity")) {
 			String kind = params[1].toLowerCase(java.util.Locale.ROOT);
 			if (kind.equals("quest") && params.length == 3)

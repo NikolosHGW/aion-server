@@ -9,6 +9,9 @@ import com.aionemu.commons.configuration.Property;
  */
 public class AIConfig {
 
+	@Property(key = "ai.companions.story.enabled", defaultValue = "false")
+	public static boolean COMPANION_STORY_ENABLED;
+
 	@Property(key = "ai.world_events.enabled", defaultValue = "false")
 	public static boolean WORLD_EVENTS_ENABLED;
 
