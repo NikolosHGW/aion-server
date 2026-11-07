@@ -9,6 +9,15 @@ import com.aionemu.commons.configuration.Property;
  */
 public class AIConfig {
 
+	@Property(key = "ai.world_events.enabled", defaultValue = "false")
+	public static boolean WORLD_EVENTS_ENABLED;
+
+	@Property(key = "ai.world_memory.enabled", defaultValue = "false")
+	public static boolean WORLD_MEMORY_ENABLED;
+
+	@Property(key = "ai.world_memory.realm", defaultValue = "")
+	public static String WORLD_MEMORY_REALM;
+
 	@Property(key = "ai.companions.activities.enabled", defaultValue = "false")
 	public static boolean COMPANION_ACTIVITIES_ENABLED;
 

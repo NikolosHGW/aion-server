@@ -185,6 +185,7 @@ public class GameServer {
 
 		nioServer = initNioServer();
 		Runtime.getRuntime().addShutdownHook(ShutdownHook.getInstance());
+		com.aionemu.gameserver.services.ai.memory.CompanionEpisodeService.getInstance().start();
 		log.info("Game server started in {} seconds", System.currentTimeMillis() / 1000 - START_TIME_SECONDS);
 
 		LoginServer.getInstance().connect(nioServer);

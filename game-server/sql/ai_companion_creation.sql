@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS `ai_companion_creation_claims` (
 	`owner_player_id` int NOT NULL,
+  `claim_token` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
 	`body_name` varchar(50) NOT NULL,
 	`host_account_id` int NOT NULL,
 	`host_account_name` varchar(50) NOT NULL,

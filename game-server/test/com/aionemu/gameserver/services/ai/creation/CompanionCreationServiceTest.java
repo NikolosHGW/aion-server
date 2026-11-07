@@ -143,7 +143,7 @@ class CompanionCreationServiceTest {
 				&& state.binding().ownerPlayerId() != claim.ownerPlayerId()))
 				throw new IllegalStateException("companion already owned");
 			claims.put(claim.ownerPlayerId(), new CompanionCreationClaim(claim.ownerPlayerId(), claim.databaseName(), claim.hostAccountId(),
-				claim.hostAccountName(), body.playerId(), claim.blueprint()));
+				claim.hostAccountName(), body.playerId(), claim.blueprint(), claim.token()));
 			CompanionBinding binding = CompanionCreationService.binding(claim.ownerPlayerId(), body.playerId());
 			states.put(claim.ownerPlayerId(), new CompanionPersistentState(binding, Optional.empty()));
 			return binding;

@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -20,6 +21,9 @@ import com.aionemu.gameserver.services.ai.creation.CompanionBlueprint;
 import com.aionemu.gameserver.services.ai.creation.CompanionAppearanceSnapshot;
 import com.aionemu.gameserver.services.ai.creation.CompanionCreationClaim;
 import com.aionemu.gameserver.services.ai.progression.CompanionProgression;
+import com.aionemu.gameserver.services.ai.memory.CompanionEpisodeService;
+import com.aionemu.gameserver.services.ai.memory.QuestCompletionEvidence;
+import com.aionemu.gameserver.questEngine.model.QuestState;
 import com.aionemu.gameserver.dao.CompanionBodyDAO;
 import com.aionemu.gameserver.geoEngine.collision.IgnoreProperties;
 import com.aionemu.gameserver.geoEngine.math.Vector3f;
@@ -298,7 +302,7 @@ public final class CompanionService {
 				reason -> dismissFromRuntime(lease, reason));
 			CompanionSession newSession = new CompanionSession(owner, controlledPlayer, controller,
 				new CompanionGoalSession(owner.getObjectId(), companion.getObjectId()), executionRuntime, combatSessionId, combatController,
-				new CompanionPersistenceRuntime(), lease, movementActions, bodyCheckpoint, progression);
+				new CompanionPersistenceRuntime(), lease, movementActions, bodyCheckpoint, progression, profileClaim == null ? null : profileClaim.token());
 			ServerControlledPlayer finalControlledPlayer = controlledPlayer;
 			sessions.publish(lease, newSession);
 
@@ -751,7 +755,8 @@ public final class CompanionService {
 
 	public String getStatus() {
 		return "reservedOrActive=" + sessions.size() + ", capacity=" + AIConfig.COMPANION_MAX_ACTIVE
-			+ ", flags=" + AIConfig.ENABLED + "/" + AIConfig.COMPANIONS_ENABLED;
+			+ ", flags=" + AIConfig.ENABLED + "/" + AIConfig.COMPANIONS_ENABLED
+			+ ", " + CompanionEpisodeService.getInstance().diagnostics();
 	}
 
 	private String runtimeStatus(CompanionSession current, Player requester) {
@@ -813,6 +818,7 @@ public final class CompanionService {
 	public String getStatus(Player requester) {
 		String runtimeStatus = sessions.withOwner(requester.getObjectId(), requester, runtimeStatus(null, requester),
 			current -> runtimeStatus(current, requester));
+		runtimeStatus += ", " + CompanionEpisodeService.getInstance().status(requester);
 		Lease<Player, CompanionSession> pending = sessions.pendingRemoval(requester.getObjectId());
 		if (pending != null)
 			runtimeStatus += ", cleanupPending=true, bodyCheckpointPending=" + pending.call(() -> pending.session().bodyCheckpoint().isPending());
@@ -828,6 +834,44 @@ public final class CompanionService {
 		return runtimeStatus + ", productCreationEnabled=true, owned=true, ownedCompanionObjectId=" + body.playerId()
 			+ ", ownedCompanionDbName=" + body.databaseName() + ", companionHostAccountId=" + body.accountId()
 			+ (blueprint == null ? ", profile=LEGACY" : ", displayName=" + blueprint.displayName() + ", permanentClass=" + blueprint.playerClass());
+	}
+
+	/** Capture only; no SQL, rewards, waiting for another owner's work, or retained mutable game objects. */
+	public void observeQuestCompletion(Player owner, QuestState state, CompanionEpisodeService episodes) {
+		if (!QuestCompletionEvidence.validRealm(episodes.realm())) return;
+		Lease<Player, CompanionSession> lease = sessions.byOwner(owner.getObjectId(), owner);
+		if (lease == null) return;
+		if (!lease.tryRun(() -> {
+			CompanionSession current = lease.session();
+			if (!sessions.usable(lease) || current == null || current.memoryClaimToken() == null) return;
+			ServerControlledPlayer controlled = current.controlledPlayer();
+			Player body = controlled.getPlayer();
+			// The lease serializes companion commands, not owner movement. Reject movement/teleport
+			// during sampling instead of combining positions from different moments/instances.
+			var ownerPosition = WitnessPosition.read(owner);
+			var bodyPosition = WitnessPosition.read(body);
+			if (!controlled.isActive() || controlled.getRole() != SyntheticPlayerRole.COMPANION || !registry.contains(controlled)
+				|| owner.getClientConnection() == null || owner.isStaff() || runtime.isServerControlled(owner) || body.getClientConnection() != null
+				|| !owner.isSpawned() || !body.isSpawned() || owner.isDead() || body.isDead()
+				|| World.getInstance().getPlayer(owner.getObjectId()) != owner || World.getInstance().getPlayer(body.getObjectId()) != body
+				|| owner.getWorldId() != QuestCompletionEvidence.MAP || body.getWorldId() != owner.getWorldId()
+				|| owner.getInstanceId() != body.getInstanceId() || !body.getKnownList().sees(owner)
+				|| !GeoService.getInstance().canSee(body, owner)) return;
+			double distance = PositionUtil.getDistance(ownerPosition.x(), ownerPosition.y(), ownerPosition.z(),
+				bodyPosition.x(), bodyPosition.y(), bodyPosition.z());
+			if (!Double.isFinite(distance) || distance > QuestCompletionEvidence.MAX_DISTANCE) return;
+			var evidence = new QuestCompletionEvidence(episodes.realm(), owner.getObjectId(), body.getObjectId(), current.memoryClaimToken(),
+				state.getQuestId(), state.getCompleteCount(), QuestCompletionEvidence.second(state.getLastCompleteTime()), System.currentTimeMillis(),
+				lease.generation(), ownerPosition.map(), ownerPosition.instance(), distance);
+			if (sessions.usable(lease) && controlled.isActive() && ownerPosition.equals(WitnessPosition.read(owner))
+				&& bodyPosition.equals(WitnessPosition.read(body)) && owner.isSpawned() && body.isSpawned()
+				&& !owner.isDead() && !body.isDead() && owner.getClientConnection() != null) episodes.offer(evidence);
+		})) episodes.skippedWitness();
+	}
+	private record WitnessPosition(int map, int instance, float x, float y, float z) {
+		static WitnessPosition read(Player player) {
+			return new WitnessPosition(player.getWorldId(), player.getInstanceId(), player.getX(), player.getY(), player.getZ());
+		}
 	}
 
 	private void maintainGoalSession(CompanionSession current) {
@@ -1365,7 +1409,8 @@ public final class CompanionService {
 	private record CompanionSession(Player owner, ServerControlledPlayer controlledPlayer, CompanionController controller,
 		CompanionGoalSession goalSession, CompanionQuestExecutionRuntime executionRuntime, long combatSessionId,
 		CompanionCombatController combatController, CompanionPersistenceRuntime persistenceRuntime, Lease<Player, CompanionSession> lease,
-		TrackedMovementGateway movementActions, BodyCheckpoint<CompanionBodyDAO.Snapshot> bodyCheckpoint, CompanionProgression progression) {
+		TrackedMovementGateway movementActions, BodyCheckpoint<CompanionBodyDAO.Snapshot> bodyCheckpoint, CompanionProgression progression,
+		UUID memoryClaimToken) {
 	}
 
 	private static final class SingletonHolder {

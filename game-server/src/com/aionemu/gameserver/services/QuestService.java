@@ -83,6 +83,7 @@ public final class QuestService {
 		Rewards extendedRewards = new Rewards();
 		if (qs == null || qs.getStatus() != QuestStatus.REWARD)
 			return false;
+		int previousCompleteCount = qs.getCompleteCount();
 		QuestTemplate template = DataManager.QUEST_DATA.getQuestById(id);
 		if (template.getCategory() == QuestCategory.MISSION && qs.getCompleteCount() != 0)
 			return false; // prevent repeatable reward because of wrong quest handling
@@ -114,6 +115,7 @@ public final class QuestService {
 		if (template.getNpcFactionId() != 0)
 			player.getNpcFactions().completeQuest(template);
 		player.getController().updateNearbyQuests();
+		com.aionemu.gameserver.services.ai.memory.CompanionEpisodeService.observeNativeCompletion(env, qs, previousCompleteCount);
 		return true;
 	}
 

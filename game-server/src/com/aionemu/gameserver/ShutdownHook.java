@@ -77,6 +77,11 @@ public class ShutdownHook extends Thread {
 		}
 
 		try {
+			com.aionemu.gameserver.services.ai.memory.CompanionEpisodeService.getInstance().close();
+		} catch (Exception e) {
+			log.error("Failed to stop companion memory worker", e);
+		}
+		try {
 			CompanionService.getInstance().shutdown();
 		} catch (Exception e) {
 			log.error("Failed to remove runtime companion before shutdown", e);

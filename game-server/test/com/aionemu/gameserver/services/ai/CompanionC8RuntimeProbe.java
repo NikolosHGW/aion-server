@@ -108,7 +108,7 @@ public final class CompanionC8RuntimeProbe {
 		var type=Class.forName(CompanionService.class.getName()+"$CompanionSession");
 		var constructor=type.getDeclaredConstructors()[0]; constructor.setAccessible(true);
 		Object session=constructor.newInstance(owner,wrapper,controller,new CompanionGoalSession(owner.getObjectId(),body.getObjectId()),execution,
-			lease.generation(),combat,new CompanionPersistenceRuntime(),lease,movement,checkpoint,null);
+			lease.generation(),combat,new CompanionPersistenceRuntime(),lease,movement,checkpoint,null,claim.token());
 		sessions.publish(lease,session);
 		SyntheticPlayerRuntime.getInstance().getRegistry().register(wrapper);
 		CombatContributionOwnerResolver.getInstance().register(body,owner,lease.generation()); wrapper.markRegistered(); wrapper.activate(); scheduler.register(wrapper);

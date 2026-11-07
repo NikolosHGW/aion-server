@@ -32,14 +32,14 @@ public final class CompanionPersistenceDAO implements CompanionPersistenceReposi
 		ON DUPLICATE KEY UPDATE companion_player_id = VALUES(companion_player_id), role = VALUES(role)
 		""";
 	private static final String LOAD_CLAIM_QUERY = """
-		SELECT owner_player_id, body_name, host_account_id, host_account_name, companion_player_id, blueprint, display_name
+		SELECT owner_player_id, body_name, host_account_id, host_account_name, companion_player_id, blueprint, display_name, claim_token
 		FROM ai_companion_creation_claims
 		WHERE owner_player_id = ?
 		""";
 	private static final String LOAD_CLAIM_FOR_UPDATE_QUERY = LOAD_CLAIM_QUERY + " FOR UPDATE";
 	private static final String INSERT_CLAIM_QUERY = """
-		INSERT INTO ai_companion_creation_claims (owner_player_id, body_name, host_account_id, host_account_name, blueprint, display_name)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO ai_companion_creation_claims (owner_player_id, body_name, host_account_id, host_account_name, blueprint, display_name, claim_token)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		""";
 	private static final String LOAD_BODY_BY_ID_QUERY = bodyQuery("p.id = ?");
 	private static final String LOAD_BODY_BY_NAME_QUERY = bodyQuery("p.name = ?");
@@ -131,6 +131,7 @@ public final class CompanionPersistenceDAO implements CompanionPersistenceReposi
 			statement.setString(4, claim.hostAccountName());
 			statement.setString(5, claim.blueprint() == null ? null : claim.blueprint().encode());
 			statement.setString(6, claim.blueprint() == null ? null : claim.blueprint().displayName());
+			statement.setString(7, claim.token().toString());
 			statement.executeUpdate();
 		} catch (SQLException | RuntimeException e) {
 			if (e instanceof SQLException sql && sql.getErrorCode() == 1062
@@ -333,13 +334,13 @@ public final class CompanionPersistenceDAO implements CompanionPersistenceReposi
 		if (!Objects.equals(result.getString("display_name"), blueprint == null ? null : blueprint.displayName()))
 			throw new SQLException("Companion display name does not match immutable blueprint");
 		return new CompanionCreationClaim(result.getInt("owner_player_id"), result.getString("body_name"), result.getInt("host_account_id"),
-			result.getString("host_account_name"), companionId, blueprint);
+			result.getString("host_account_name"), companionId, blueprint, java.util.UUID.fromString(result.getString("claim_token")));
 	}
 
 	private static boolean sameClaim(CompanionCreationClaim expected, CompanionCreationClaim actual) {
 		return expected.ownerPlayerId() == actual.ownerPlayerId() && expected.databaseName().equals(actual.databaseName())
 			&& expected.hostAccountId() == actual.hostAccountId() && expected.hostAccountName().equals(actual.hostAccountName())
-			&& Objects.equals(expected.blueprint(), actual.blueprint())
+			&& Objects.equals(expected.blueprint(), actual.blueprint()) && expected.token().equals(actual.token())
 			&& (expected.companionPlayerId() == null || expected.companionPlayerId().equals(actual.companionPlayerId()));
 	}
 
